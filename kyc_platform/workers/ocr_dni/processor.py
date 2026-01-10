@@ -15,6 +15,7 @@ from kyc_platform.workers.ocr_dni.heuristics import (
     authenticity_analyzer,
     document_liveness_analyzer,
 )
+from kyc_platform.workers.ocr_dni.heuristics.authenticity_analyzer import combined_authenticity_analyzer
 from kyc_platform.workers.ocr_dni.strategies import (
     DNINewFrontStrategy,
     DNINewBackStrategy,
@@ -118,10 +119,17 @@ class DNIProcessor:
         
         extraction_result = self._unified_strategy.extract(pil_image)
         
+        side = "back" if heuristic_result.signals.mrz_score > 0.5 else "front"
+        
         authenticity_result = None
         if check_authenticity:
-            logger.info("Running authenticity analysis")
-            authenticity_result = authenticity_analyzer.analyze(pil_image)
+            logger.info("Running combined authenticity + template analysis")
+            authenticity_result = combined_authenticity_analyzer.analyze(
+                image=pil_image,
+                cv_image=normalized,
+                side=side,
+                use_template=True,
+            )
             logger.info(
                 "Authenticity analysis completed",
                 extra={

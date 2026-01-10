@@ -186,3 +186,64 @@ class AuthenticityAnalyzer:
 
 
 authenticity_analyzer = AuthenticityAnalyzer()
+
+
+class CombinedAuthenticityAnalyzer:
+    
+    def __init__(self):
+        self.basic_analyzer = AuthenticityAnalyzer()
+        self._template_analyzer = None
+    
+    @property
+    def template_analyzer(self):
+        if self._template_analyzer is None:
+            from kyc_platform.workers.ocr_dni.heuristics.template_analyzer import TemplateAnalyzer
+            self._template_analyzer = TemplateAnalyzer()
+        return self._template_analyzer
+    
+    def analyze(
+        self,
+        image: Image.Image,
+        cv_image: np.ndarray = None,
+        side: str = "front",
+        use_template: bool = True,
+    ) -> dict[str, Any]:
+        basic_result = self.basic_analyzer.analyze(image)
+        
+        template_result = None
+        if use_template and cv_image is not None and cv2_available:
+            try:
+                template_result = self.template_analyzer.analyze(cv_image, side=side)
+            except Exception as e:
+                logger.warning(f"Template analysis failed: {e}")
+                template_result = None
+        
+        if template_result and template_result.get("template_score") is not None:
+            combined_score = (
+                basic_result.get("authenticity_score", 0.5) * 0.4 +
+                template_result.get("template_score", 0.5) * 0.6
+            )
+            
+            all_flags = basic_result.get("flags", []).copy()
+            for flag in template_result.get("flags", []):
+                if flag not in all_flags:
+                    all_flags.append(flag)
+            
+            return {
+                "authenticity_score": round(combined_score, 2),
+                "basic_score": basic_result.get("authenticity_score"),
+                "template_score": template_result.get("template_score"),
+                "variant_detected": template_result.get("variant_detected"),
+                "zones_passed": template_result.get("zones_passed", 0),
+                "zones_analyzed": template_result.get("zones_analyzed", 0),
+                "critical_zones_passed": template_result.get("critical_zones_passed", False),
+                "metrics": basic_result.get("metrics", {}),
+                "zone_results": template_result.get("zone_results", {}),
+                "flags": all_flags,
+                "is_likely_authentic": combined_score >= 0.6 and len(all_flags) <= 3,
+            }
+        
+        return basic_result
+
+
+combined_authenticity_analyzer = CombinedAuthenticityAnalyzer()
