@@ -14,6 +14,8 @@
 11. [Environment Variables](#environment-variables)
 12. [Local Development](#local-development)
 13. [Dependencies](#dependencies)
+14. [OpenAPI Specification](#openapi-specification)
+15. [AWS API Gateway Integration](#aws-api-gateway-integration)
 
 ---
 
@@ -769,6 +771,215 @@ pip install fastapi uvicorn pydantic pytesseract pyzbar pillow mangum python-mul
 # System packages (Debian/Ubuntu)
 apt install tesseract-ocr tesseract-ocr-spa libzbar0
 ```
+
+---
+
+## OpenAPI Specification
+
+### Static YAML Export
+The API specification is exported as a static YAML file for version control and external integrations:
+
+```
+docs/openapi.yaml
+```
+
+This file is auto-generated from the FastAPI application and should be regenerated when API changes are made:
+
+```bash
+curl -s http://localhost:5000/openapi.json | python -c "import sys, json, yaml; print(yaml.dump(json.load(sys.stdin), allow_unicode=True, default_flow_style=False, sort_keys=False))" > docs/openapi.yaml
+```
+
+### Live Documentation
+- **Swagger UI**: `https://<your-domain>/docs`
+- **ReDoc**: `https://<your-domain>/redoc`
+- **OpenAPI JSON**: `https://<your-domain>/openapi.json`
+
+---
+
+## AWS API Gateway Integration
+
+### Import OpenAPI to REST API (Recommended)
+
+The `docs/openapi.yaml` file can be imported into AWS API Gateway REST API for full compatibility with the Mangum Lambda adapter.
+
+#### Option A: REST API (API Gateway v1)
+
+**Recommended** for production use with Mangum adapter.
+
+##### Step 1: Create REST API from OpenAPI
+```bash
+aws apigateway import-rest-api \
+  --body file://docs/openapi.yaml \
+  --fail-on-warnings
+```
+
+Or via AWS Console:
+1. Go to **API Gateway** → **Create API**
+2. Select **REST API** → **Import**
+3. Upload `docs/openapi.yaml`
+4. Review and create
+
+##### Step 2: Configure Lambda Integration
+```bash
+# Get the root resource ID
+aws apigateway get-resources --rest-api-id <api-id>
+
+# Create Lambda integration for each method
+aws apigateway put-integration \
+  --rest-api-id <api-id> \
+  --resource-id <resource-id> \
+  --http-method POST \
+  --type AWS_PROXY \
+  --integration-http-method POST \
+  --uri arn:aws:apigateway:<region>:lambda:path/2015-03-31/functions/arn:aws:lambda:<region>:<account>:function:kyc-handler-documents/invocations
+```
+
+##### Step 3: Configure Lambda Permissions
+```bash
+aws lambda add-permission \
+  --function-name kyc-handler-documents \
+  --statement-id api-gateway-invoke \
+  --action lambda:InvokeFunction \
+  --principal apigateway.amazonaws.com \
+  --source-arn "arn:aws:execute-api:<region>:<account>:<api-id>/*"
+```
+
+##### Step 4: Deploy to Stage
+```bash
+aws apigateway create-deployment \
+  --rest-api-id <api-id> \
+  --stage-name production
+```
+
+#### Option B: HTTP API (API Gateway v2)
+
+HTTP APIs are simpler and ~70% cheaper but require additional configuration steps for Mangum.
+
+```bash
+# Step 1: Import API
+aws apigatewayv2 import-api \
+  --body file://docs/openapi.yaml \
+  --fail-on-warnings
+
+# Step 2: Create Lambda integration with payload format 1.0 (required for Mangum)
+INTEGRATION_ID=$(aws apigatewayv2 create-integration \
+  --api-id <api-id> \
+  --integration-type AWS_PROXY \
+  --integration-uri arn:aws:lambda:<region>:<account>:function:kyc-handler-documents \
+  --payload-format-version 1.0 \
+  --query 'IntegrationId' --output text)
+
+# Step 3: Attach integration to each route
+aws apigatewayv2 update-route \
+  --api-id <api-id> \
+  --route-id <route-id-for-POST-documents> \
+  --target integrations/$INTEGRATION_ID
+
+aws apigatewayv2 update-route \
+  --api-id <api-id> \
+  --route-id <route-id-for-GET-documents-id> \
+  --target integrations/$INTEGRATION_ID
+
+aws apigatewayv2 update-route \
+  --api-id <api-id> \
+  --route-id <route-id-for-GET-health> \
+  --target integrations/$INTEGRATION_ID
+
+# Step 4: Add Lambda permission
+aws lambda add-permission \
+  --function-name kyc-handler-documents \
+  --statement-id api-gateway-http-invoke \
+  --action lambda:InvokeFunction \
+  --principal apigateway.amazonaws.com \
+  --source-arn "arn:aws:execute-api:<region>:<account>:<api-id>/*"
+
+# Step 5: Create and deploy stage
+aws apigatewayv2 create-stage \
+  --api-id <api-id> \
+  --stage-name production \
+  --auto-deploy
+```
+
+**Note:** To get route IDs, use:
+```bash
+aws apigatewayv2 get-routes --api-id <api-id>
+```
+
+### Lambda Routes Mapping
+
+| Route | Method | Lambda Function |
+|-------|--------|-----------------|
+| /documents | POST | kyc-handler-documents |
+| /documents/{document_id} | GET | kyc-handler-documents |
+| /health | GET | kyc-handler-documents |
+
+### Terraform Example (REST API)
+
+```hcl
+resource "aws_api_gateway_rest_api" "kyc_api" {
+  name        = "kyc-platform-api"
+  description = "KYC Platform REST API"
+  body        = file("${path.module}/docs/openapi.yaml")
+}
+
+resource "aws_api_gateway_deployment" "production" {
+  rest_api_id = aws_api_gateway_rest_api.kyc_api.id
+  stage_name  = "production"
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+resource "aws_lambda_permission" "api_gateway" {
+  statement_id  = "AllowAPIGatewayInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.handler.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_api_gateway_rest_api.kyc_api.execution_arn}/*"
+}
+```
+
+### CloudFormation Example (REST API)
+
+```yaml
+AWSTemplateFormatVersion: '2010-09-09'
+Resources:
+  KYCApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: kyc-platform-api
+      Description: KYC Platform REST API
+      Body:
+        Fn::Transform:
+          Name: AWS::Include
+          Parameters:
+            Location: s3://your-bucket/openapi.yaml
+
+  KYCApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    Properties:
+      RestApiId: !Ref KYCApi
+      StageName: production
+
+  LambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: kyc-handler-documents
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${KYCApi}/*"
+```
+
+### API Gateway Features
+Once deployed, you can configure:
+- **Throttling**: Rate limiting per route (10,000 requests/second default)
+- **Authorization**: API Keys, IAM, Cognito, or custom Lambda authorizers
+- **CORS**: Cross-origin configuration via response headers
+- **Custom Domain**: Map to your domain with ACM certificate
+- **Logging**: CloudWatch integration for access and execution logs
+- **Caching**: Response caching for GET endpoints
+- **WAF**: Web Application Firewall integration
 
 ---
 

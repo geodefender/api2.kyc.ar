@@ -1,0 +1,371 @@
+openapi: 3.1.0
+info:
+  title: KYC Platform API
+  description: "\n## Overview\nEvent-driven microservice for OCR processing of Argentine\
+    \ identity documents (DNI and Passport).\n\n## Features\n- **Document Upload**:\
+    \ Submit documents for OCR extraction\n- **Status Tracking**: Query processing\
+    \ status and extracted data\n- **Idempotency**: Duplicate detection via content\
+    \ hash\n- **Webhooks**: Optional result notification via HMAC-signed webhooks\n\
+    \n## Supported Documents\n- **DNI Nuevo** (2012+): PDF417 barcode + OCR fallback\n\
+    - **DNI Viejo** (pre-2012): OCR extraction\n- **Passport**: MRZ parsing + OCR\
+    \ fallback\n\n## Authentication\nCurrently open for development. Production deployments\
+    \ should implement API key or OAuth2.\n    "
+  contact:
+    name: KYC Platform Team
+    email: kyc-support@example.com
+  license:
+    name: Proprietary
+  version: 1.0.0
+paths:
+  /documents:
+    post:
+      tags:
+      - Documents
+      summary: Upload document for OCR processing
+      description: "Upload an identity document image for OCR extraction.\n\n**Supported\
+        \ document types:**\n- `dni`: Argentine National Identity Document (DNI nuevo\
+        \ or viejo)\n- `passport`: Argentine Passport with MRZ\n\n**Idempotency:**\n\
+        Duplicate requests (same client_id + document_type + image) return the existing\
+        \ document without reprocessing.\n\n**Processing Flow:**\n1. Document is validated\
+        \ and stored\n2. Job is queued for async OCR processing  \n3. Use GET /documents/{document_id}\
+        \ to check status\n4. Optional: Receive results via webhook"
+      operationId: upload_document_documents_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DocumentUploadRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentUploadResponse'
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /documents/{document_id}:
+    get:
+      tags:
+      - Documents
+      summary: Get document processing status
+      description: 'Retrieve the current processing status and extracted data for
+        a document.
+
+
+        **Status values:**
+
+        - `pending`: Document received, not yet queued
+
+        - `queued`: Document queued for OCR processing
+
+        - `processing`: OCR extraction in progress
+
+        - `extracted`: Extraction completed successfully (extracted_data available)
+
+        - `failed`: Extraction failed (see errors field)'
+      operationId: get_document_status_documents__document_id__get
+      parameters:
+      - name: document_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Document Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentStatusResponse'
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Not Found
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /health:
+    get:
+      tags:
+      - Documents
+      summary: Health check
+      description: Returns the health status of the KYC API service.
+      operationId: health_check_health_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+components:
+  schemas:
+    DocumentStatusResponse:
+      properties:
+        document_id:
+          type: string
+          title: Document Id
+          description: Unique identifier for the document
+          example: doc_1736523845123_a1b2c3d4
+        verification_id:
+          type: string
+          title: Verification Id
+          description: Verification session identifier
+          example: ver_1736523845123_e5f6g7h8
+        document_type:
+          $ref: '#/components/schemas/DocumentType'
+          description: Type of identity document
+          example: dni
+        status:
+          $ref: '#/components/schemas/ProcessingStatus'
+          description: Current processing status
+          example: extracted
+        extracted_data:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Extracted Data
+          description: Extracted document data (available when status is 'extracted')
+          example:
+            apellido: GONZALEZ
+            fecha_nacimiento: 15/03/1985
+            nacionalidad: ARG
+            nombre: JUAN CARLOS
+            numero_documento: '12345678'
+            sexo: M
+        confidence:
+          anyOf:
+          - type: number
+            maximum: 1.0
+            minimum: 0.0
+          - type: 'null'
+          title: Confidence
+          description: Extraction confidence score (0.0 to 1.0)
+          example: 0.95
+        processing_time_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Processing Time Ms
+          description: Total processing time in milliseconds
+          example: 2450
+        errors:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Errors
+          description: List of errors if status is 'failed'
+          example:
+          - 'OCR extraction failed: image too blurry'
+      type: object
+      required:
+      - document_id
+      - verification_id
+      - document_type
+      - status
+      title: DocumentStatusResponse
+      examples:
+      - confidence: 0.95
+        document_id: doc_1736523845123_a1b2c3d4
+        document_type: dni
+        extracted_data:
+          apellido: GONZALEZ
+          nombre: JUAN CARLOS
+          numero_documento: '12345678'
+        processing_time_ms: 2450
+        status: extracted
+        verification_id: ver_1736523845123_e5f6g7h8
+    DocumentType:
+      type: string
+      enum:
+      - dni
+      - passport
+      title: DocumentType
+    DocumentUploadRequest:
+      properties:
+        document_type:
+          $ref: '#/components/schemas/DocumentType'
+          description: Type of identity document to process
+          example: dni
+        image:
+          type: string
+          format: byte
+          title: Image
+          description: Base64 encoded image of the document (JPEG or PNG format)
+          example: /9j/4AAQSkZJRgABAQEASABIAAD/2wBD... (base64 encoded image)
+        client_id:
+          type: string
+          title: Client Id
+          description: Unique client identifier for grouping documents and idempotency
+          default: demo
+          example: client_abc123
+        webhook_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Webhook Url
+          description: Optional URL to receive extraction results via POST webhook
+          example: https://your-app.com/webhook/kyc
+        webhook_secret:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Webhook Secret
+          description: Secret key for HMAC-SHA256 webhook signature verification
+          example: your-webhook-secret
+      type: object
+      required:
+      - document_type
+      - image
+      title: DocumentUploadRequest
+      examples:
+      - client_id: client_abc123
+        document_type: dni
+        image: /9j/4AAQSkZJRgABAQEASABIAAD...
+        webhook_secret: your-webhook-secret
+        webhook_url: https://your-app.com/webhook/kyc
+    DocumentUploadResponse:
+      properties:
+        ok:
+          type: boolean
+          title: Ok
+          description: Indicates if the request was successful
+          example: true
+        document_id:
+          type: string
+          title: Document Id
+          description: Unique identifier for the uploaded document
+          example: doc_1736523845123_a1b2c3d4
+        verification_id:
+          type: string
+          title: Verification Id
+          description: Verification session identifier for grouping related documents
+          example: ver_1736523845123_e5f6g7h8
+        status:
+          $ref: '#/components/schemas/ProcessingStatus'
+          description: Current processing status of the document
+          example: queued
+      type: object
+      required:
+      - ok
+      - document_id
+      - verification_id
+      - status
+      title: DocumentUploadResponse
+      examples:
+      - document_id: doc_1736523845123_a1b2c3d4
+        ok: true
+        status: queued
+        verification_id: ver_1736523845123_e5f6g7h8
+    ErrorResponse:
+      properties:
+        ok:
+          type: boolean
+          title: Ok
+          description: Always false for error responses
+          default: false
+          example: false
+        error:
+          type: string
+          title: Error
+          description: Error type or code
+          example: DOCUMENT_NOT_FOUND
+        detail:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Detail
+          description: Detailed error message
+          example: Document with ID doc_xyz not found
+      type: object
+      required:
+      - error
+      title: ErrorResponse
+      examples:
+      - detail: Document with ID doc_xyz not found
+        error: DOCUMENT_NOT_FOUND
+        ok: false
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
+    HealthResponse:
+      properties:
+        status:
+          type: string
+          title: Status
+          description: Health status of the service
+          example: healthy
+        service:
+          type: string
+          title: Service
+          description: Name of the service
+          example: kyc-api-handler
+      type: object
+      required:
+      - status
+      - service
+      title: HealthResponse
+    ProcessingStatus:
+      type: string
+      enum:
+      - pending
+      - queued
+      - processing
+      - extracted
+      - failed
+      title: ProcessingStatus
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+          title: Location
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+      type: object
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError
+
