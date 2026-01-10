@@ -31,6 +31,13 @@ Microservicio event-driven en Python para procesamiento OCR de documentos de ide
   - extract_value_after_label(): handles label/value on separate lines
   - Improved document number extraction prioritizing XX.XXX.XXX format
   - Real DNI testing: 5-7 fields extracted, 0.85-0.90 confidence
+- **PDF417 decoder upgrade (Jan 10, 2026)**:
+  - Replaced pyzbar with pdf417decoder (pure Python, no zbar dependency)
+  - pdf417decoder handles both DNI Nuevo and DNI Antiguo barcode formats
+  - Added dual-format parser: new format (tramite@apellido@...) and old format (@dni@ejemplar@...)
+  - DNI Nuevo front: extracts tramite, apellido, nombre, sexo, numero_documento, ejemplar, fechas
+  - DNI Antiguo back: extracts numero_documento, ejemplar, apellido, nombre, nacionalidad, sexo, cuil, fechas
+  - Successfully tested with real DNI images: 9-10 fields extracted, 0.85-0.90 confidence
 
 ## User Preferences
 - Language: Spanish for communication, English for code
@@ -94,7 +101,7 @@ kyc_platform/
 ### Dependencies
 - FastAPI + Uvicorn (API)
 - pytesseract (OCR)
-- pyzbar (PDF417 barcode)
+- pdf417decoder (PDF417 barcode - pure Python, no zbar)
 - Pillow (Image processing)
-- OpenCV (Image preprocessing, heuristics)
+- OpenCV-headless (Image preprocessing, heuristics)
 - Mangum (Lambda adapter)

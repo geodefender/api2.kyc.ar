@@ -11,6 +11,7 @@ from kyc_platform.workers.ocr_dni.strategies import (
     DNIOldStrategy,
     DNINuevoStrategy,
     DNIViejoStrategy,
+    DNIUnifiedStrategy,
 )
 from kyc_platform.shared.logging import get_logger
 
@@ -21,6 +22,8 @@ class DNIProcessor:
     
     def __init__(self):
         self._heuristic_analyzer = DniHeuristicAnalyzer()
+        
+        self._unified_strategy = DNIUnifiedStrategy()
         
         self._strategies = {
             "dni_new_front": DNINewFrontStrategy(),
@@ -71,10 +74,7 @@ class DNIProcessor:
         
         pil_image = Image.fromarray(cv2.cvtColor(normalized, cv2.COLOR_BGR2RGB))
         
-        extraction_result = self._extract_with_strategy(
-            pil_image,
-            heuristic_result.document_variant,
-        )
+        extraction_result = self._unified_strategy.extract(pil_image)
         
         processing_time_ms = int((time.time() - start_time) * 1000)
         

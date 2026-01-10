@@ -4,6 +4,7 @@ from kyc_platform.workers.ocr_dni.strategies.dni_viejo import DNIViejoStrategy
 from kyc_platform.workers.ocr_dni.strategies.dni_new_front import DNINewFrontStrategy
 from kyc_platform.workers.ocr_dni.strategies.dni_new_back import DNINewBackStrategy
 from kyc_platform.workers.ocr_dni.strategies.dni_old import DNIOldStrategy
+from kyc_platform.workers.ocr_dni.strategies.dni_unified import DNIUnifiedStrategy
 
 __all__ = [
     "DNIOCRStrategy",
@@ -12,4 +13,5 @@ __all__ = [
     "DNINewFrontStrategy",
     "DNINewBackStrategy",
     "DNIOldStrategy",
+    "DNIUnifiedStrategy",
 ]
