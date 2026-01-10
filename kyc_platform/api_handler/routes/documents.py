@@ -7,6 +7,8 @@ from kyc_platform.api_handler.schemas import (
     DocumentUploadResponse,
     DocumentStatusResponse,
     ErrorResponse,
+    HealthResponse,
+    ProcessingStatus,
 )
 from kyc_platform.api_handler.services.id_generator import generate_document_id, generate_verification_id
 from kyc_platform.api_handler.services.idempotency import generate_idempotency_key
@@ -41,6 +43,23 @@ def save_image(image_base64: str, document_id: str) -> str:
     "/documents",
     response_model=DocumentUploadResponse,
     responses={400: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+    summary="Upload document for OCR processing",
+    description="""
+Upload an identity document image for OCR extraction.
+
+**Supported document types:**
+- `dni`: Argentine National Identity Document (DNI nuevo or viejo)
+- `passport`: Argentine Passport with MRZ
+
+**Idempotency:**
+Duplicate requests (same client_id + document_type + image) return the existing document without reprocessing.
+
+**Processing Flow:**
+1. Document is validated and stored
+2. Job is queued for async OCR processing  
+3. Use GET /documents/{document_id} to check status
+4. Optional: Receive results via webhook
+    """,
 )
 async def upload_document(request: DocumentUploadRequest):
     repository = get_repository()
@@ -64,7 +83,7 @@ async def upload_document(request: DocumentUploadRequest):
             ok=True,
             document_id=existing.document_id,
             verification_id=existing.verification_id,
-            status=existing.status.value,
+            status=ProcessingStatus(existing.status.value),
         )
     
     document_id = generate_document_id()
@@ -117,7 +136,7 @@ async def upload_document(request: DocumentUploadRequest):
         ok=True,
         document_id=document_id,
         verification_id=verification_id,
-        status="queued",
+        status=ProcessingStatus.QUEUED,
     )
 
 
@@ -125,6 +144,17 @@ async def upload_document(request: DocumentUploadRequest):
     "/documents/{document_id}",
     response_model=DocumentStatusResponse,
     responses={404: {"model": ErrorResponse}},
+    summary="Get document processing status",
+    description="""
+Retrieve the current processing status and extracted data for a document.
+
+**Status values:**
+- `pending`: Document received, not yet queued
+- `queued`: Document queued for OCR processing
+- `processing`: OCR extraction in progress
+- `extracted`: Extraction completed successfully (extracted_data available)
+- `failed`: Extraction failed (see errors field)
+    """,
 )
 async def get_document_status(document_id: str):
     repository = get_repository()
@@ -137,7 +167,7 @@ async def get_document_status(document_id: str):
         document_id=record.document_id,
         verification_id=record.verification_id,
         document_type=record.document_type,
-        status=record.status.value,
+        status=ProcessingStatus(record.status.value),
         extracted_data=record.extracted_data,
         confidence=record.confidence,
         processing_time_ms=record.processing_time_ms,
@@ -145,6 +175,11 @@ async def get_document_status(document_id: str):
     )
 
 
-@router.get("/health")
+@router.get(
+    "/health",
+    response_model=HealthResponse,
+    summary="Health check",
+    description="Returns the health status of the KYC API service.",
+)
 async def health_check():
-    return {"status": "healthy", "service": "kyc-api-handler"}
+    return HealthResponse(status="healthy", service="kyc-api-handler")

@@ -18,9 +18,33 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="KYC Platform API",
-    description="API for document upload and OCR processing",
+    description="""
+## Overview
+Event-driven microservice for OCR processing of Argentine identity documents (DNI and Passport).
+
+## Features
+- **Document Upload**: Submit documents for OCR extraction
+- **Status Tracking**: Query processing status and extracted data
+- **Idempotency**: Duplicate detection via content hash
+- **Webhooks**: Optional result notification via HMAC-signed webhooks
+
+## Supported Documents
+- **DNI Nuevo** (2012+): PDF417 barcode + OCR fallback
+- **DNI Viejo** (pre-2012): OCR extraction
+- **Passport**: MRZ parsing + OCR fallback
+
+## Authentication
+Currently open for development. Production deployments should implement API key or OAuth2.
+    """,
     version="1.0.0",
     lifespan=lifespan,
+    contact={
+        "name": "KYC Platform Team",
+        "email": "kyc-support@example.com",
+    },
+    license_info={
+        "name": "Proprietary",
+    },
 )
 
 app.add_middleware(
