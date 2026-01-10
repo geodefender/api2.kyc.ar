@@ -48,6 +48,14 @@ Microservicio event-driven en Python para procesamiento OCR de documentos de ide
   - Created ocr_license worker with Argentina-specific field extraction
   - Extracts: numero_licencia, numero_documento, apellido, nombre, fechas, clase, grupo_sanguineo
   - Updated worker_simulator to handle kyc-ocr-license queue
+- **Template-based zone verification (Jan 10, 2026)**:
+  - Created `data/reference_samples/dni/` with organized samples by variant
+  - Added `templates.json` with zone coordinates for nuevo_2016, nuevo_2019, nuevo_2023, antiguo
+  - Implemented `TemplateAnalyzer`: zone extraction, per-zone verification, scoring
+  - Zone verifications: saturation, iridescence, face detection, barcode, fingerprint, text presence
+  - Automatic variant detection based on pink colors, photo position, hologram features
+  - `CombinedAuthenticityAnalyzer`: merges basic (40%) + template (60%) scores
+  - Documentation: `docs/TEMPLATES.md` with zone diagrams and API usage
 
 ## User Preferences
 - Language: Spanish for communication, English for code
@@ -81,10 +89,12 @@ kyc_platform/
 - `kyc_platform/workers/ocr_dni/lambda_function.py` - DNI Lambda handler
 - `kyc_platform/workers/ocr_passport/lambda_function.py` - Passport Lambda handler
 - `kyc_platform/workers/ocr_license/lambda_function.py` - License Lambda handler
-- `kyc_platform/workers/ocr_dni/heuristics/authenticity_analyzer.py` - Authenticity checks
+- `kyc_platform/workers/ocr_dni/heuristics/authenticity_analyzer.py` - Authenticity + combined analyzer
+- `kyc_platform/workers/ocr_dni/heuristics/template_analyzer.py` - Zone-based template verification
 - `kyc_platform/workers/ocr_dni/heuristics/document_liveness_analyzer.py` - Liveness checks
 - `kyc_platform/workers/webhook_dispatcher/lambda_function.py` - Webhook Lambda handler
-- `kyc_platform/runner/local_pipeline.py` - End-to-end simulation
+- `data/reference_samples/dni/templates.json` - Zone coordinates per variant
+- `docs/TEMPLATES.md` - Template system documentation
 
 ### Running
 - API Server: `python -m kyc_platform.api_handler.main`

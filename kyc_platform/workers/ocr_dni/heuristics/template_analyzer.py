@@ -417,13 +417,8 @@ class VariantDetector:
         if has_pink:
             return "nuevo_2023"
         
-        photo_left_region = image[int(h*0.1):int(h*0.5), 0:int(w*0.3)]
-        photo_right_region = image[int(h*0.1):int(h*0.5), int(w*0.55):w]
-        
-        left_edge_density = self._get_edge_density(photo_left_region)
-        right_edge_density = self._get_edge_density(photo_right_region)
-        
-        if right_edge_density > left_edge_density * 1.5:
+        is_antiguo = self._check_antiguo_layout(image, h, w)
+        if is_antiguo:
             return "antiguo"
         
         center_region = image[int(h*0.4):int(h*0.7), int(w*0.3):int(w*0.6)]
@@ -434,27 +429,117 @@ class VariantDetector:
         
         return "nuevo_2019"
     
+    def _check_antiguo_layout(self, image: np.ndarray, h: int, w: int) -> bool:
+        try:
+            right_photo_region = image[int(h*0.05):int(h*0.65), int(w*0.52):int(w*0.98)]
+            left_photo_region = image[int(h*0.05):int(h*0.55), 0:int(w*0.30)]
+            
+            def has_skin_tones(region):
+                hsv = cv2.cvtColor(region, cv2.COLOR_BGR2HSV)
+                skin_mask1 = cv2.inRange(hsv, (0, 20, 70), (20, 255, 255))
+                skin_mask2 = cv2.inRange(hsv, (0, 10, 100), (25, 150, 255))
+                skin_ratio = (np.sum(skin_mask1 > 0) + np.sum(skin_mask2 > 0)) / (2 * region.size / 3)
+                return skin_ratio
+            
+            right_skin = has_skin_tones(right_photo_region)
+            left_skin = has_skin_tones(left_photo_region)
+            
+            if right_skin > 0.08 and right_skin > left_skin * 1.2:
+                return True
+            
+            bottom_region = image[int(h*0.72):h, :]
+            gray = cv2.cvtColor(bottom_region, cv2.COLOR_BGR2GRAY)
+            
+            _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            row_profile = np.mean(binary, axis=1)
+            transitions = np.sum(np.abs(np.diff(row_profile)) > 40)
+            
+            if transitions >= 4:
+                return True
+            
+            return False
+        except Exception:
+            return False
+    
+    def _get_photo_presence_score(self, region: np.ndarray) -> float:
+        try:
+            gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
+            edges = cv2.Canny(gray, 50, 150)
+            edge_density = np.sum(edges > 0) / edges.size
+            
+            color_variance = np.var(region)
+            
+            h, w = gray.shape
+            center_region = gray[int(h*0.2):int(h*0.8), int(w*0.2):int(w*0.8)]
+            center_brightness = np.mean(center_region)
+            
+            skin_like = 80 < center_brightness < 200
+            
+            score = edge_density * 5
+            if color_variance > 500:
+                score += 0.2
+            if skin_like:
+                score += 0.15
+            
+            return min(1.0, score)
+        except Exception:
+            return 0.0
+    
+    def _check_mrz_on_front(self, image: np.ndarray, h: int, w: int) -> bool:
+        try:
+            bottom_region = image[int(h*0.70):h, :]
+            gray = cv2.cvtColor(bottom_region, cv2.COLOR_BGR2GRAY)
+            
+            _, binary = cv2.threshold(gray, 100, 255, cv2.THRESH_BINARY)
+            dark_ratio = 1 - (np.sum(binary > 127) / binary.size)
+            
+            if 0.15 < dark_ratio < 0.45:
+                horizontal_projection = np.mean(binary, axis=1)
+                text_lines = np.sum(np.abs(np.diff(horizontal_projection)) > 30)
+                return text_lines >= 3
+            return False
+        except Exception:
+            return False
+    
     def _detect_back_variant(self, image: np.ndarray, h: int, w: int) -> str:
         has_pink = self._check_pink_presence(image)
         if has_pink:
             return "nuevo_2023"
         
-        mrz_region = image[int(h*0.75):h, :]
+        mrz_region = image[int(h*0.72):h, :]
         has_mrz = self._check_mrz_presence(mrz_region)
         
-        if not has_mrz:
-            return "antiguo"
+        if has_mrz:
+            center_hologram = image[int(h*0.25):int(h*0.55), int(w*0.32):int(w*0.58)]
+            hsv = cv2.cvtColor(center_hologram, cv2.COLOR_BGR2HSV)
+            
+            blue_mask = cv2.inRange(hsv, (90, 50, 50), (130, 255, 255))
+            blue_ratio = np.sum(blue_mask > 0) / blue_mask.size
+            
+            hologram_hue_var = np.var(hsv[:, :, 0])
+            
+            if hologram_hue_var > 600 and blue_ratio > 0.15:
+                return "nuevo_2016"
+            
+            return "nuevo_2019"
         
-        top_region = image[0:int(h*0.15), :]
-        has_parents = self._check_text_density(top_region)
-        
-        center_hologram = image[int(h*0.25):int(h*0.55), int(w*0.3):int(w*0.6)]
-        hologram_color_var = np.var(cv2.cvtColor(center_hologram, cv2.COLOR_BGR2HSV)[:, :, 0])
-        
-        if hologram_color_var > 800:
-            return "nuevo_2016"
-        
-        return "nuevo_2019"
+        return "antiguo"
+    
+    def _get_barcode_density(self, region: np.ndarray) -> float:
+        try:
+            gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
+            _, binary = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY)
+            
+            dark_ratio = 1 - (np.sum(binary > 127) / binary.size)
+            
+            vertical_edges = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+            edge_strength = np.mean(np.abs(vertical_edges))
+            
+            if dark_ratio > 0.2 and edge_strength > 20:
+                return dark_ratio
+            return 0.0
+        except Exception:
+            return 0.0
     
     def _check_pink_presence(self, image: np.ndarray) -> bool:
         try:
@@ -489,14 +574,28 @@ class VariantDetector:
     def _check_mrz_presence(self, region: np.ndarray) -> bool:
         try:
             gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
-            _, binary = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY)
             
-            row_means = np.mean(binary, axis=1)
-            alternating = np.sum(np.abs(np.diff(row_means)) > 50)
+            _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
             
-            return alternating > region.shape[0] * 0.3
+            dark_ratio = 1 - (np.sum(binary > 127) / binary.size)
+            
+            if dark_ratio < 0.08 or dark_ratio > 0.60:
+                return False
+            
+            h, w = gray.shape
+            num_rows = 3
+            row_height = h // num_rows
+            
+            text_lines_detected = 0
+            for i in range(num_rows):
+                row = binary[i*row_height:(i+1)*row_height, :]
+                row_dark = 1 - (np.sum(row > 127) / row.size)
+                if row_dark > 0.10:
+                    text_lines_detected += 1
+            
+            return text_lines_detected >= 2
         except Exception:
-            return True
+            return False
     
     def _check_text_density(self, region: np.ndarray) -> float:
         try:
