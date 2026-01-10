@@ -20,6 +20,10 @@ Microservicio event-driven en Python para procesamiento OCR de documentos de ide
   - Added heuristics/dni_heuristic_analyzer.py: PDF417, MRZ, front, old scoring
   - New strategies: dni_new_front.py, dni_new_back.py, dni_old.py
   - Modified processor.py: heuristic detection BEFORE OCR, strategy selection by variant
+- **Strategy standardization (Jan 10, 2026)**:
+  - All strategies now return `{source, fields, confidence}` format
+  - source values: "pdf417", "ocr", "ocr_fallback", "error", "none"
+  - normalize_image: each step wrapped with try/except, always returns valid image
 
 ## User Preferences
 - Language: Spanish for communication, English for code
