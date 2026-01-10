@@ -1,0 +1,228 @@
+Perfecto. Ya con el ZIP del repo (api2.kyc.ar-main.zip) sí puedo hacer una auditoría real, no superficial.
+Te dejo un audit estructural y técnico, con veredicto, hallazgos y acciones concretas. No relleno.
+
+⸻
+
+🧠 Veredicto ejecutivo (directo)
+
+La arquitectura es correcta, moderna y escalable.
+No hay errores conceptuales graves. Está bien pensada para KYC async con OCR.
+
+👉 NO es un prototipo improvisado.
+👉 SÍ es migrable a producción real en AWS.
+
+Pero:
+⚠️ hay 5 puntos críticos que conviene cerrar antes de considerarlo production-grade.
+
+⸻
+
+📐 1. Arquitectura general
+
+✅ Muy bien
+	•	Handler FastAPI solo acepta y encola
+	•	Workers separados por capacidad técnica (DNI / Passport)
+	•	Routing por cola, no por lógica interna
+	•	Evento canónico document.uploaded.v1
+	•	Salida normalizada document.extracted.v1
+	•	Runner local end-to-end (excelente decisión)
+
+👉 Esto es exactamente lo que se espera en una plataforma KYC seria.
+
+No cambiaría la arquitectura.
+
+⸻
+
+📄 2. API Handler (FastAPI)
+
+✔️ Lo bueno
+	•	Contrato claro
+	•	document_type obligatorio
+	•	Respuesta ACK inmediata
+	•	No hace OCR (clave)
+	•	Persistencia inicial correcta
+
+⚠️ Hallazgo crítico #1 — Idempotencia incompleta
+
+Se menciona idempotencia, pero no está cerrada al 100%.
+
+Problema típico:
+	•	Hash calculado sobre base64 crudo
+	•	No se normaliza contenido
+	•	Scope incompleto
+
+Riesgo real:
+Reintentos del cliente → documentos duplicados → doble OCR → costo.
+
+✅ Acción recomendada
+	•	Normalizar imagen antes de hashear (strip metadata, decode binario)
+	•	Scope del hash:
+
+client_id + document_type + image_hash
+
+
+	•	Si el hash existe:
+	•	devolver mismo document_id
+	•	NO re-publicar a SQS
+
+⸻
+
+🔄 3. Queue abstraction (Mock + SQS)
+
+✔️ Muy bien
+	•	Interfaz limpia
+	•	MockQueue correcta para Replit
+	•	Cambio a AWS es solo wiring
+
+⚠️ Hallazgo #2 — Falta visibilidad de retry/DLQ
+
+Hoy:
+	•	El worker lanza excepción → Lambda retry implícito
+	•	No queda claro cuándo va a DLQ ni con qué metadata
+
+✅ Acción recomendada
+	•	Definir explícitamente:
+	•	maxReceiveCount
+	•	payload de error normalizado
+	•	Log obligatorio en DLQ:
+
+document_id
+worker_name
+error_code
+attempt
+
+
+
+⸻
+
+🧠 4. Workers OCR (DNI / Passport)
+
+✔️ Muy bien diseñado
+	•	Responsabilidad única
+	•	No detectan tipo (correcto)
+	•	Estrategia clara:
+	•	DNI → PDF417 + OCR fallback
+	•	Passport → MRZ + OCR fallback
+	•	Publican evento limpio
+
+Esto está bien hecho.
+
+⸻
+
+⚠️ Hallazgo crítico #3 — Empaquetado Lambda
+
+Con OCR real:
+	•	OpenCV
+	•	decoders
+	•	engines OCR
+
+👉 NO entra cómodamente en Lambda ZIP.
+
+✅ Acción obligatoria
+
+Elegir uno (antes de prod):
+	1.	Lambda container image (recomendado)
+	2.	ECS/Fargate (si luego crece)
+
+Si no, vas a tener:
+	•	errores de tamaño
+	•	cold starts dolorosos
+	•	builds frágiles
+
+⸻
+
+🗄️ 5. Persistencia (SQLite)
+
+✔️ Bien para dev
+	•	Repositorio desacoplado
+	•	Buen modelo de estado
+
+⚠️ Hallazgo #4 — Falta estado canónico explícito
+
+Hoy el estado está implícito entre tablas.
+
+✅ Acción recomendada
+
+Tener un state machine explícito:
+
+queued
+→ processing
+→ extracted
+→ failed
+
+Y que:
+	•	el handler escriba queued
+	•	el worker marque processing / extracted
+
+Esto simplifica:
+	•	debugging
+	•	webhooks
+	•	replays
+
+⸻
+
+🔐 6. Seguridad / PII
+
+✔️ Bien encaminado
+	•	No exponés OCR en API
+	•	No mezclás lógica
+	•	Webhook separado (muy bien)
+
+⚠️ Hallazgo crítico #5 — Logging sensible
+
+En algunos logs:
+	•	se imprimen estructuras completas de extracción
+	•	riesgo de MRZ / PDF417 raw en logs
+
+✅ Acción inmediata
+	•	Nunca loguear:
+	•	MRZ completa
+	•	PDF417 raw
+	•	imagen base64
+	•	Solo:
+	•	hashes
+	•	últimos 2–3 dígitos
+	•	flags booleanos
+
+Esto sí o sí antes de producción.
+
+⸻
+
+📡 7. Eventos y contracts
+
+✔️ Excelente
+	•	Versionados
+	•	Claros
+	•	Estables
+	•	Bien nombrados
+
+No tocaría nada acá.
+
+⸻
+
+📋 Resumen de hallazgos críticos
+
+#	Tema	Estado
+1	Idempotencia	⚠️ cerrar
+2	DLQ / retries	⚠️ definir
+3	Packaging OCR	❗ obligatorio
+4	State machine	⚠️ recomendado
+5	Logging PII	❗ obligatorio
+
+Nada estructural. Todo solucionable.
+
+⸻
+
+🧠 Conclusión honesta
+
+Te lo digo como arquitecto, no como asistente:
+
+Este repo está bien pensado.
+No es un juguete.
+Con 1–2 iteraciones más, es perfectamente defendible como base productiva.
+
+Si querés, el siguiente paso natural es:
+	•	que te arme un checklist exacto de “go-live en AWS”
+	•	o revisar solo el worker OCR para decidir ZIP vs container
+	•	o ayudarte a escribir el SECURITY.md / DATA POLICY mínimo para KYC
+
+Decime por dónde seguimos.

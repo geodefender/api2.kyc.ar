@@ -4,21 +4,34 @@ from typing import Any
 from kyc_platform.workers.ocr_passport.processor import PassportProcessor
 from kyc_platform.workers.ocr_passport.publisher import PassportPublisher
 from kyc_platform.persistence import get_repository
+from kyc_platform.queue import get_queue, WorkerErrorHandler
+from kyc_platform.shared.config import config
 from kyc_platform.shared.logging import get_logger
+from kyc_platform.shared.pii_sanitizer import sanitize_event_for_logging
 
 logger = get_logger(__name__)
+
+WORKER_NAME = "kyc-worker-ocr-passport"
 
 processor = PassportProcessor()
 publisher = PassportPublisher()
 
 
 def handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]:
-    logger.info("Passport Worker received event", extra={"event": event})
+    safe_event = sanitize_event_for_logging(event)
+    logger.info("Passport Worker received event", extra={"event": safe_event})
     
     if "Records" in event:
         records = event["Records"]
     else:
         records = [{"body": event}]
+    
+    queue = get_queue()
+    error_handler = WorkerErrorHandler(
+        queue=queue,
+        source_queue=config.QUEUE_PASSPORT_NAME,
+        worker_name=WORKER_NAME,
+    )
     
     results = []
     
@@ -28,7 +41,7 @@ def handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]:
         else:
             body = record.get("body", record)
         
-        result = process_single_document(body)
+        result = process_single_document(body, error_handler)
         results.append(result)
     
     return {
@@ -37,13 +50,17 @@ def handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]:
     }
 
 
-def process_single_document(event_body: dict[str, Any]) -> dict[str, Any]:
+def process_single_document(
+    event_body: dict[str, Any],
+    error_handler: WorkerErrorHandler,
+) -> dict[str, Any]:
     document_id = event_body.get("document_id")
     verification_id = event_body.get("verification_id")
     image_ref = event_body.get("image_ref")
     
     if not all([document_id, verification_id, image_ref]):
-        logger.error("Missing required fields in event", extra={"event": event_body})
+        safe_event = sanitize_event_for_logging(event_body)
+        logger.error("Missing required fields in event", extra={"event": safe_event})
         return {"success": False, "error": "Missing required fields"}
     
     logger.info(
@@ -57,7 +74,24 @@ def process_single_document(event_body: dict[str, Any]) -> dict[str, Any]:
         record.mark_processing()
         repository.update(record)
     
-    result = processor.process(image_ref)
+    try:
+        result = processor.process(image_ref)
+    except Exception as e:
+        error_handler.handle_error(
+            message=event_body,
+            error=e,
+            stage="ocr_processing",
+            document_id=document_id,
+            verification_id=verification_id,
+        )
+        if record:
+            record.mark_failed([str(e)])
+            repository.update(record)
+        return {
+            "success": False,
+            "document_id": document_id,
+            "errors": [str(e)],
+        }
     
     if result["success"]:
         publisher.publish_extracted(

@@ -6,12 +6,14 @@ from typing import Any, Optional
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
 
-from kyc_platform.queue import get_queue
-from kyc_platform.queue.dlq import WorkerErrorHandler
+from kyc_platform.queue import get_queue, WorkerErrorHandler
 from kyc_platform.shared.config import config
 from kyc_platform.shared.logging import get_logger
+from kyc_platform.shared.pii_sanitizer import sanitize_event_for_logging
 
 logger = get_logger(__name__)
+
+WORKER_NAME = "kyc-worker-webhook"
 
 
 class WebhookConfig:
@@ -101,7 +103,8 @@ def send_with_retry(
 
 
 def handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]:
-    logger.info("Webhook Dispatcher received event", extra={"event": event})
+    safe_event = sanitize_event_for_logging(event)
+    logger.info("Webhook Dispatcher received event", extra={"event": safe_event})
     
     if "Records" in event:
         records = event["Records"]
@@ -109,7 +112,11 @@ def handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]:
         records = [{"body": event}]
     
     queue = get_queue()
-    error_handler = WorkerErrorHandler(queue, config.QUEUE_EXTRACTED_NAME)
+    error_handler = WorkerErrorHandler(
+        queue=queue,
+        source_queue=config.QUEUE_WEBHOOK_NAME,
+        worker_name=WORKER_NAME,
+    )
     
     results = []
     

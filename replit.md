@@ -10,6 +10,11 @@ Microservicio event-driven en Python para procesamiento OCR de documentos de ide
 - Added webhook dispatcher worker with HMAC signature and retries
 - Updated naming convention to `kyc-*` for AWS resources
 - Added AWS configuration for memory/timeout per Lambda
+- **Audit improvements (Jan 10, 2026)**:
+  - Enhanced idempotency: Image normalization via Pillow (strips EXIF) before hashing
+  - Enhanced DLQ: Added worker_name, verification_id, max_receive_count, is_final_attempt
+  - Explicit state machine: queued → processing → extracted/failed lifecycle
+  - PII sanitization: Masking for document numbers, CUIL, MRZ, PDF417, base64 images
 
 ## User Preferences
 - Language: Spanish for communication, English for code
@@ -51,9 +56,11 @@ kyc_platform/
 - DLQ: `kyc-ocr-dni-dlq`, `kyc-ocr-passport-dlq`
 
 ### Production Features
-- Idempotency: Duplicate detection via SHA256 hash
-- DLQ: Dead letter queue for failed messages
+- Idempotency: Duplicate detection via SHA256 hash (with EXIF normalization)
+- DLQ: Dead letter queue with enhanced metadata (worker_name, verification_id, attempt tracking)
 - Webhook: HMAC-signed notifications with retry/backoff
+- State Machine: Explicit queued → processing → extracted/failed transitions
+- PII Sanitization: Safe logging with masked sensitive data
 - Configurable timeouts and memory per Lambda
 
 ### Dependencies
