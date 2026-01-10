@@ -59,6 +59,10 @@ class MockQueue(EventQueue):
         
         for msg in result:
             msg["visible"] = False
+            if "receive_count" not in msg:
+                msg["receive_count"] = 1
+            else:
+                msg["receive_count"] += 1
         self._save_queue(queue_name, messages)
         
         return result
@@ -77,6 +81,20 @@ class MockQueue(EventQueue):
     def get_queue_size(self, queue_name: str) -> int:
         messages = self._load_queue(queue_name)
         return len([m for m in messages if m.get("visible", True)])
+    
+    def make_visible(self, queue_name: str, receipt_handle: str) -> bool:
+        try:
+            messages = self._load_queue(queue_name)
+            for m in messages:
+                if m.get("receipt_handle") == receipt_handle:
+                    m["visible"] = True
+                    break
+            self._save_queue(queue_name, messages)
+            logger.info(f"Made message visible in queue {queue_name}", extra={"receipt_handle": receipt_handle})
+            return True
+        except Exception as e:
+            logger.error(f"Failed to make message visible: {e}")
+            return False
     
     def peek_all(self, queue_name: str) -> list[dict[str, Any]]:
         return self._load_queue(queue_name)
