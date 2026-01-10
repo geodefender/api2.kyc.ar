@@ -32,6 +32,11 @@ Event-driven microservice for OCR processing of Argentine identity documents (DN
 - **DNI Nuevo** (2012+): PDF417 barcode + OCR fallback
 - **DNI Viejo** (pre-2012): OCR extraction
 - **Passport**: MRZ parsing + OCR fallback
+- **License**: Argentine driver's license OCR extraction
+
+## Optional Features
+- **check_authenticity**: Detects photocopies, screen captures via saturation/sharpness/glare analysis
+- **check_document_liveness**: Requires multiple frames to verify hologram/reflection changes
 
 ## Authentication
 Currently open for development. Production deployments should implement API key or OAuth2.

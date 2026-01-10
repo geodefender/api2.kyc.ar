@@ -1,10 +1,20 @@
 import time
-import cv2
-from typing import Any
+from typing import Any, Optional
 from PIL import Image
 
+try:
+    import cv2
+    cv2_available = True
+except ImportError:
+    cv2 = None
+    cv2_available = False
+
 from kyc_platform.workers.ocr_dni.preprocess import normalize_image
-from kyc_platform.workers.ocr_dni.heuristics import DniHeuristicAnalyzer
+from kyc_platform.workers.ocr_dni.heuristics import (
+    DniHeuristicAnalyzer,
+    authenticity_analyzer,
+    document_liveness_analyzer,
+)
 from kyc_platform.workers.ocr_dni.strategies import (
     DNINewFrontStrategy,
     DNINewBackStrategy,
@@ -33,8 +43,40 @@ class DNIProcessor:
             "viejo": DNIViejoStrategy(),
         }
     
-    def process(self, image_path: str) -> dict[str, Any]:
+    def process(
+        self,
+        image_path: str,
+        check_authenticity: bool = False,
+        check_document_liveness: bool = False,
+        frames: Optional[list[str]] = None,
+    ) -> dict[str, Any]:
         start_time = time.time()
+        
+        if not cv2_available:
+            logger.warning("OpenCV not available, using PIL-only processing")
+            try:
+                pil_image = Image.open(image_path).convert("RGB")
+                extraction_result = self._unified_strategy.extract(pil_image)
+                
+                processing_time_ms = int((time.time() - start_time) * 1000)
+                return {
+                    "success": True,
+                    "extracted_data": extraction_result["fields"],
+                    "confidence": extraction_result["confidence"],
+                    "source": extraction_result["source"],
+                    "dni_type": "nuevo",
+                    "document_variant": "unknown",
+                    "heuristic_confidence": 0.0,
+                    "processing_time_ms": processing_time_ms,
+                    "authenticity_result": None,
+                    "liveness_result": None,
+                }
+            except Exception as e:
+                return {
+                    "success": False,
+                    "errors": [f"Failed to process image: {str(e)}"],
+                    "processing_time_ms": int((time.time() - start_time) * 1000),
+                }
         
         try:
             cv_image = cv2.imread(image_path)
@@ -76,6 +118,30 @@ class DNIProcessor:
         
         extraction_result = self._unified_strategy.extract(pil_image)
         
+        authenticity_result = None
+        if check_authenticity:
+            logger.info("Running authenticity analysis")
+            authenticity_result = authenticity_analyzer.analyze(pil_image)
+            logger.info(
+                "Authenticity analysis completed",
+                extra={
+                    "authenticity_score": authenticity_result.get("authenticity_score"),
+                    "flags": authenticity_result.get("flags"),
+                },
+            )
+        
+        liveness_result = None
+        if check_document_liveness and frames:
+            logger.info(f"Running document liveness analysis with {len(frames)} frames")
+            liveness_result = document_liveness_analyzer.analyze(frames)
+            logger.info(
+                "Document liveness analysis completed",
+                extra={
+                    "liveness_score": liveness_result.get("liveness_score"),
+                    "is_live_document": liveness_result.get("is_live_document"),
+                },
+            )
+        
         processing_time_ms = int((time.time() - start_time) * 1000)
         
         return {
@@ -87,6 +153,8 @@ class DNIProcessor:
             "document_variant": heuristic_result.document_variant,
             "heuristic_confidence": heuristic_result.confidence,
             "processing_time_ms": processing_time_ms,
+            "authenticity_result": authenticity_result,
+            "liveness_result": liveness_result,
         }
     
     def _extract_with_strategy(

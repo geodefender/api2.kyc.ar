@@ -18,6 +18,9 @@ class DocumentUploadedEvent(BaseEvent):
     client_id: str
     document_type: DocumentType
     image_ref: str
+    check_authenticity: bool = False
+    check_document_liveness: bool = False
+    frames: Optional[list[str]] = None
 
 
 class DocumentExtractedEvent(BaseEvent):
@@ -29,6 +32,8 @@ class DocumentExtractedEvent(BaseEvent):
     confidence: float
     processing_time_ms: int
     errors: Optional[list[str]] = None
+    authenticity_result: Optional[dict[str, Any]] = None
+    liveness_result: Optional[dict[str, Any]] = None
 
 
 class EventFactory:
@@ -39,6 +44,9 @@ class EventFactory:
         client_id: str,
         document_type: DocumentType,
         image_ref: str,
+        check_authenticity: bool = False,
+        check_document_liveness: bool = False,
+        frames: Optional[list[str]] = None,
     ) -> DocumentUploadedEvent:
         return DocumentUploadedEvent(
             document_id=document_id,
@@ -46,6 +54,9 @@ class EventFactory:
             client_id=client_id,
             document_type=document_type,
             image_ref=image_ref,
+            check_authenticity=check_authenticity,
+            check_document_liveness=check_document_liveness,
+            frames=frames,
         )
     
     @staticmethod
@@ -57,6 +68,8 @@ class EventFactory:
         confidence: float,
         processing_time_ms: int,
         errors: Optional[list[str]] = None,
+        authenticity_result: Optional[dict[str, Any]] = None,
+        liveness_result: Optional[dict[str, Any]] = None,
     ) -> DocumentExtractedEvent:
         return DocumentExtractedEvent(
             document_id=document_id,
@@ -66,4 +79,6 @@ class EventFactory:
             confidence=confidence,
             processing_time_ms=processing_time_ms,
             errors=errors,
+            authenticity_result=authenticity_result,
+            liveness_result=liveness_result,
         )

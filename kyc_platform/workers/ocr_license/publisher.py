@@ -8,7 +8,8 @@ from kyc_platform.shared.logging import get_logger
 logger = get_logger(__name__)
 
 
-class DNIPublisher:
+class LicensePublisher:
+    
     def __init__(self):
         self.queue = get_queue()
     
@@ -26,7 +27,7 @@ class DNIPublisher:
         event = EventFactory.create_document_extracted(
             document_id=document_id,
             verification_id=verification_id,
-            document_type=DocumentType.DNI,
+            document_type=DocumentType.LICENSE,
             extracted_data=extracted_data,
             confidence=confidence,
             processing_time_ms=processing_time_ms,
@@ -35,15 +36,12 @@ class DNIPublisher:
             liveness_result=liveness_result,
         )
         
-        success = self.queue.publish(config.QUEUE_EXTRACTED_NAME, event.model_dump())
+        logger.info(
+            f"Publishing document.extracted.v1 to {config.QUEUE_EXTRACTED_NAME}",
+            extra={
+                "document_id": document_id,
+                "confidence": confidence,
+            },
+        )
         
-        if success:
-            logger.info(
-                "Published document.extracted.v1",
-                extra={
-                    "document_id": document_id,
-                    "confidence": confidence,
-                },
-            )
-        
-        return success
+        return self.queue.publish(config.QUEUE_EXTRACTED_NAME, event.model_dump())

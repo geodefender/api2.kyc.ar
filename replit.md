@@ -1,7 +1,7 @@
 # KYC Platform - OCR Microservice
 
 ## Overview
-Microservicio event-driven en Python para procesamiento OCR de documentos de identidad argentinos (DNI y Pasaporte). Arquitectura diseñada para AWS Lambda + SQS, simulable completamente en local.
+Microservicio event-driven en Python para procesamiento OCR de documentos de identidad argentinos (DNI, Pasaporte y Licencia de conducir). Arquitectura diseñada para AWS Lambda + SQS, simulable completamente en local. Incluye detección de autenticidad y liveness de documentos como features opcionales.
 
 ## Recent Changes
 - January 2026: Initial project setup
@@ -38,6 +38,16 @@ Microservicio event-driven en Python para procesamiento OCR de documentos de ide
   - DNI Nuevo front: extracts tramite, apellido, nombre, sexo, numero_documento, ejemplar, fechas
   - DNI Antiguo back: extracts numero_documento, ejemplar, apellido, nombre, nacionalidad, sexo, cuil, fechas
   - Successfully tested with real DNI images: 9-10 fields extracted, 0.85-0.90 confidence
+- **Authenticity & Liveness Detection (Jan 10, 2026)**:
+  - Added AuthenticityAnalyzer: saturation, Laplacian sharpness, glare, moiré pattern detection
+  - Added DocumentLivenessAnalyzer: multi-frame analysis for hologram/reflection changes
+  - New API parameters: check_authenticity, check_document_liveness, frames (array of base64)
+  - Returns authenticity_score, liveness_score, and diagnostic flags in extracted_data
+- **License document support (Jan 10, 2026)**:
+  - Added LICENSE document type to config
+  - Created ocr_license worker with Argentina-specific field extraction
+  - Extracts: numero_licencia, numero_documento, apellido, nombre, fechas, clase, grupo_sanguineo
+  - Updated worker_simulator to handle kyc-ocr-license queue
 
 ## User Preferences
 - Language: Spanish for communication, English for code
@@ -54,9 +64,10 @@ kyc_platform/
 ├── workers/
 │   ├── ocr_dni/          # DNI Worker (PDF417 + OCR)
 │   │   ├── preprocess/   # Image normalization (deskew, CLAHE, trim)
-│   │   ├── heuristics/   # Document variant detection (PDF417, MRZ, front, old)
+│   │   ├── heuristics/   # Document detection + authenticity + liveness analyzers
 │   │   └── strategies/   # OCR strategies per variant
 │   ├── ocr_passport/     # Passport Worker (MRZ)
+│   ├── ocr_license/      # License Worker (Argentina)
 │   └── webhook_dispatcher/ # Webhook notifications
 ├── queue/                # EventQueue abstraction + DLQ
 ├── contracts/            # Events + Models
@@ -69,6 +80,9 @@ kyc_platform/
 - `kyc_platform/api_handler/main.py` - FastAPI entrypoint
 - `kyc_platform/workers/ocr_dni/lambda_function.py` - DNI Lambda handler
 - `kyc_platform/workers/ocr_passport/lambda_function.py` - Passport Lambda handler
+- `kyc_platform/workers/ocr_license/lambda_function.py` - License Lambda handler
+- `kyc_platform/workers/ocr_dni/heuristics/authenticity_analyzer.py` - Authenticity checks
+- `kyc_platform/workers/ocr_dni/heuristics/document_liveness_analyzer.py` - Liveness checks
 - `kyc_platform/workers/webhook_dispatcher/lambda_function.py` - Webhook Lambda handler
 - `kyc_platform/runner/local_pipeline.py` - End-to-end simulation
 
@@ -84,9 +98,9 @@ kyc_platform/
 4. GET `/documents/{id}` to check status and extracted data
 
 ### AWS Resource Naming
-- Lambdas: `kyc-handler-documents`, `kyc-worker-ocr-dni`, `kyc-worker-ocr-passport`, `kyc-worker-webhook`
-- SQS Queues: `kyc-ocr-dni`, `kyc-ocr-passport`, `kyc-extracted`, `kyc-webhook`
-- DLQ: `kyc-ocr-dni-dlq`, `kyc-ocr-passport-dlq`
+- Lambdas: `kyc-handler-documents`, `kyc-worker-ocr-dni`, `kyc-worker-ocr-passport`, `kyc-worker-ocr-license`, `kyc-worker-webhook`
+- SQS Queues: `kyc-ocr-dni`, `kyc-ocr-passport`, `kyc-ocr-license`, `kyc-extracted`, `kyc-webhook`
+- DLQ: `kyc-ocr-dni-dlq`, `kyc-ocr-passport-dlq`, `kyc-ocr-license-dlq`
 
 ### Production Features
 - Idempotency: Duplicate detection via SHA256 hash (with EXIF normalization)
@@ -97,6 +111,13 @@ kyc_platform/
 - Heuristic Detection: Document variant detection (dni_new_front, dni_new_back, dni_old) before OCR
 - Image Preprocessing: Auto-rotate, deskew, CLAHE, margin trim, contour detection
 - Configurable timeouts and memory per Lambda
+- **Authenticity Detection** (optional): Saturation, sharpness, glare, moiré analysis via `check_authenticity`
+- **Document Liveness** (optional): Multi-frame hologram/reflection analysis via `check_document_liveness` + `frames`
+
+### API Optional Parameters
+- `check_authenticity: bool` - Enable photocopy/screen capture detection
+- `check_document_liveness: bool` - Enable multi-frame document liveness check
+- `frames: list[str]` - Array of 3-5 base64 images at different angles (required for liveness)
 
 ### Dependencies
 - FastAPI + Uvicorn (API)

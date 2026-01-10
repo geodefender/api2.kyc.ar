@@ -10,6 +10,7 @@ class Environment(str, Enum):
 class DocumentType(str, Enum):
     DNI = "dni"
     PASSPORT = "passport"
+    LICENSE = "license"
 
 
 class Config:
@@ -19,6 +20,7 @@ class Config:
     
     QUEUE_DNI_NAME: str = os.getenv("QUEUE_DNI_NAME", f"{SERVICE_PREFIX}-ocr-dni")
     QUEUE_PASSPORT_NAME: str = os.getenv("QUEUE_PASSPORT_NAME", f"{SERVICE_PREFIX}-ocr-passport")
+    QUEUE_LICENSE_NAME: str = os.getenv("QUEUE_LICENSE_NAME", f"{SERVICE_PREFIX}-ocr-license")
     QUEUE_EXTRACTED_NAME: str = os.getenv("QUEUE_EXTRACTED_NAME", f"{SERVICE_PREFIX}-extracted")
     QUEUE_WEBHOOK_NAME: str = os.getenv("QUEUE_WEBHOOK_NAME", f"{SERVICE_PREFIX}-webhook")
     
@@ -38,6 +40,7 @@ class Config:
         mapping = {
             DocumentType.DNI: cls.QUEUE_DNI_NAME,
             DocumentType.PASSPORT: cls.QUEUE_PASSPORT_NAME,
+            DocumentType.LICENSE: cls.QUEUE_LICENSE_NAME,
         }
         return mapping[document_type]
     

@@ -8,6 +8,7 @@ sys.path.insert(0, ".")
 from kyc_platform.queue import get_queue
 from kyc_platform.workers.ocr_dni.lambda_function import handler as dni_handler
 from kyc_platform.workers.ocr_passport.lambda_function import handler as passport_handler
+from kyc_platform.workers.ocr_license.lambda_function import handler as license_handler
 from kyc_platform.shared.config import config
 from kyc_platform.shared.logging import get_logger
 
@@ -82,6 +83,7 @@ def main():
     print(f"Queues monitored:")
     print(f"  - {config.QUEUE_DNI_NAME}")
     print(f"  - {config.QUEUE_PASSPORT_NAME}")
+    print(f"  - {config.QUEUE_LICENSE_NAME}")
     print("=" * 60)
     print("Waiting for messages... (Ctrl+C to stop)\n")
     
@@ -91,8 +93,9 @@ def main():
         while True:
             dni_count = process_queue(queue, config.QUEUE_DNI_NAME, dni_handler)
             passport_count = process_queue(queue, config.QUEUE_PASSPORT_NAME, passport_handler)
+            license_count = process_queue(queue, config.QUEUE_LICENSE_NAME, license_handler)
             
-            if dni_count == 0 and passport_count == 0:
+            if dni_count == 0 and passport_count == 0 and license_count == 0:
                 pass
             
             time.sleep(POLL_INTERVAL_SECONDS)

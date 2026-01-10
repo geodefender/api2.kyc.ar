@@ -1,3 +1,5 @@
+from typing import Optional
+
 from kyc_platform.contracts.events import EventFactory, DocumentUploadedEvent
 from kyc_platform.queue import get_queue
 from kyc_platform.shared.config import config, DocumentType
@@ -17,6 +19,9 @@ class EnqueueService:
         client_id: str,
         document_type: DocumentType,
         image_ref: str,
+        check_authenticity: bool = False,
+        check_document_liveness: bool = False,
+        frames: Optional[list[str]] = None,
     ) -> bool:
         event = EventFactory.create_document_uploaded(
             document_id=document_id,
@@ -24,6 +29,9 @@ class EnqueueService:
             client_id=client_id,
             document_type=document_type,
             image_ref=image_ref,
+            check_authenticity=check_authenticity,
+            check_document_liveness=check_document_liveness,
+            frames=frames,
         )
         
         queue_name = config.get_queue_name_for_document_type(document_type)
@@ -34,6 +42,8 @@ class EnqueueService:
                 "document_id": document_id,
                 "document_type": document_type.value,
                 "queue": queue_name,
+                "check_authenticity": check_authenticity,
+                "check_document_liveness": check_document_liveness,
             },
         )
         

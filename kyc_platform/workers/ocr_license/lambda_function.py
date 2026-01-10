@@ -1,8 +1,8 @@
 import json
 from typing import Any
 
-from kyc_platform.workers.ocr_dni.processor import DNIProcessor
-from kyc_platform.workers.ocr_dni.publisher import DNIPublisher
+from kyc_platform.workers.ocr_license.processor import LicenseProcessor
+from kyc_platform.workers.ocr_license.publisher import LicensePublisher
 from kyc_platform.persistence import get_repository
 from kyc_platform.queue import get_queue, WorkerErrorHandler
 from kyc_platform.shared.config import config
@@ -11,15 +11,15 @@ from kyc_platform.shared.pii_sanitizer import sanitize_event_for_logging
 
 logger = get_logger(__name__)
 
-WORKER_NAME = "kyc-worker-ocr-dni"
+WORKER_NAME = "kyc-worker-ocr-license"
 
-processor = DNIProcessor()
-publisher = DNIPublisher()
+processor = LicenseProcessor()
+publisher = LicensePublisher()
 
 
 def handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]:
     safe_event = sanitize_event_for_logging(event)
-    logger.info("DNI Worker received event", extra={"event": safe_event})
+    logger.info("License Worker received event", extra={"event": safe_event})
     
     if "Records" in event:
         records = event["Records"]
@@ -29,7 +29,7 @@ def handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]:
     queue = get_queue()
     error_handler = WorkerErrorHandler(
         queue=queue,
-        source_queue=config.QUEUE_DNI_NAME,
+        source_queue=config.QUEUE_LICENSE_NAME,
         worker_name=WORKER_NAME,
     )
     
@@ -64,7 +64,7 @@ def process_single_document(
         return {"success": False, "error": "Missing required fields"}
     
     logger.info(
-        "Processing DNI document",
+        "Processing License document",
         extra={"document_id": document_id, "image_ref": image_ref},
     )
     
@@ -74,17 +74,8 @@ def process_single_document(
         record.mark_processing()
         repository.update(record)
     
-    check_authenticity = event_body.get("check_authenticity", False)
-    check_document_liveness = event_body.get("check_document_liveness", False)
-    frames = event_body.get("frames")
-    
     try:
-        result = processor.process(
-            image_ref,
-            check_authenticity=check_authenticity,
-            check_document_liveness=check_document_liveness,
-            frames=frames,
-        )
+        result = processor.process(image_ref)
     except Exception as e:
         error_handler.handle_error(
             message=event_body,
@@ -109,8 +100,6 @@ def process_single_document(
             extracted_data=result["extracted_data"],
             confidence=result["confidence"],
             processing_time_ms=result["processing_time_ms"],
-            authenticity_result=result.get("authenticity_result"),
-            liveness_result=result.get("liveness_result"),
         )
         
         if record:
@@ -124,7 +113,6 @@ def process_single_document(
         return {
             "success": True,
             "document_id": document_id,
-            "dni_type": result.get("dni_type"),
             "confidence": result["confidence"],
         }
     else:
@@ -144,9 +132,9 @@ def process_single_document(
 if __name__ == "__main__":
     test_event = {
         "event": "document.uploaded.v1",
-        "document_id": "doc_test_123",
-        "verification_id": "ver_test_456",
-        "image_ref": "./data/uploads/test.jpg",
+        "document_id": "doc_test_license",
+        "verification_id": "ver_test_license",
+        "image_ref": "./data/uploads/test_license.jpg",
     }
     result = handler(test_event)
     print(json.dumps(result, indent=2))

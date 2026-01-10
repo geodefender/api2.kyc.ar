@@ -52,6 +52,11 @@ Upload an identity document image for OCR extraction.
 **Supported document types:**
 - `dni`: Argentine National Identity Document (DNI nuevo or viejo)
 - `passport`: Argentine Passport with MRZ
+- `license`: Argentine Driver's License
+
+**Optional features:**
+- `check_authenticity`: Enable photocopy/screen detection
+- `check_document_liveness`: Enable multi-frame liveness check (requires `frames` array)
 
 **Idempotency:**
 Duplicate requests (same client_id + document_type + image) return the existing document without reprocessing.
@@ -134,6 +139,9 @@ async def upload_document(request: DocumentUploadRequest):
         client_id=request.client_id,
         document_type=request.document_type,
         image_ref=image_ref,
+        check_authenticity=request.check_authenticity,
+        check_document_liveness=request.check_document_liveness,
+        frames=request.frames,
     )
     
     if not success:
@@ -202,6 +210,7 @@ async def process_queue(max_messages: int = 10):
     from kyc_platform.queue import get_queue
     from kyc_platform.workers.ocr_dni.lambda_function import handler as dni_handler
     from kyc_platform.workers.ocr_passport.lambda_function import handler as passport_handler
+    from kyc_platform.workers.ocr_license.lambda_function import handler as license_handler
     
     if not config.is_local():
         raise HTTPException(
@@ -209,7 +218,7 @@ async def process_queue(max_messages: int = 10):
             detail="This endpoint is only available in local development mode",
         )
     
-    results = {"dni": [], "passport": []}
+    results = {"dni": [], "passport": [], "license": []}
     queue = get_queue()
     
     dni_messages = queue.consume("kyc-ocr-dni", max_messages)
@@ -240,7 +249,21 @@ async def process_queue(max_messages: int = 10):
             logger.error(f"Passport processing failed: {e}")
             results["passport"] = [{"error": str(e)}]
     
-    total_processed = len(results["dni"]) + len(results["passport"])
+    license_messages = queue.consume("kyc-ocr-license", max_messages)
+    
+    if license_messages:
+        event = {"Records": [{"body": m["body"], "receiptHandle": m["receipt_handle"]} for m in license_messages]}
+        try:
+            result = license_handler(event, None)
+            body = json.loads(result.get("body", "{}")) if isinstance(result.get("body"), str) else result
+            results["license"] = body.get("results", [])
+            for m in license_messages:
+                queue.delete_message("kyc-ocr-license", m["receipt_handle"])
+        except Exception as e:
+            logger.error(f"License processing failed: {e}")
+            results["license"] = [{"error": str(e)}]
+    
+    total_processed = len(results["dni"]) + len(results["passport"]) + len(results["license"])
     
     return {
         "ok": True,

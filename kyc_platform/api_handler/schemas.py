@@ -47,6 +47,21 @@ class DocumentUploadRequest(BaseModel):
         description="Skip idempotency check and force reprocessing of the image",
         json_schema_extra={"example": False},
     )
+    check_authenticity: bool = Field(
+        default=False,
+        description="Enable authenticity analysis (saturation, sharpness, glare, moire detection)",
+        json_schema_extra={"example": True},
+    )
+    check_document_liveness: bool = Field(
+        default=False,
+        description="Enable document liveness check (requires frames parameter)",
+        json_schema_extra={"example": False},
+    )
+    frames: Optional[list[str]] = Field(
+        default=None,
+        description="Array of 3-5 base64 images at different angles for document liveness check",
+        json_schema_extra={"example": None},
+    )
 
     model_config = {
         "json_schema_extra": {
