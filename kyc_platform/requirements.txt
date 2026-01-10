@@ -1,0 +1,8 @@
+fastapi>=0.100.0
+uvicorn>=0.23.0
+pydantic>=2.0.0
+python-multipart>=0.0.6
+pytesseract>=0.3.10
+pyzbar>=0.1.9
+Pillow>=10.0.0
+mangum>=0.17.0
