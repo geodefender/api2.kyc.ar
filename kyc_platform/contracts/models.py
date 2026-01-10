@@ -55,6 +55,7 @@ class DocumentRecord(BaseModel):
     confidence: Optional[float] = None
     processing_time_ms: Optional[int] = None
     errors: Optional[list[str]] = None
+    idempotency_key: Optional[str] = None
     
     def mark_queued(self) -> "DocumentRecord":
         self.status = DocumentStatus.QUEUED

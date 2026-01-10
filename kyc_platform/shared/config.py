@@ -15,9 +15,17 @@ class DocumentType(str, Enum):
 class Config:
     ENVIRONMENT: Environment = Environment(os.getenv("KYC_ENVIRONMENT", "local"))
     
-    QUEUE_DNI_NAME: str = os.getenv("QUEUE_DNI_NAME", "queue-ocr-dni")
-    QUEUE_PASSPORT_NAME: str = os.getenv("QUEUE_PASSPORT_NAME", "queue-ocr-passport")
-    QUEUE_EXTRACTED_NAME: str = os.getenv("QUEUE_EXTRACTED_NAME", "queue-extracted")
+    SERVICE_PREFIX: str = os.getenv("SERVICE_PREFIX", "kyc")
+    
+    QUEUE_DNI_NAME: str = os.getenv("QUEUE_DNI_NAME", f"{SERVICE_PREFIX}-ocr-dni")
+    QUEUE_PASSPORT_NAME: str = os.getenv("QUEUE_PASSPORT_NAME", f"{SERVICE_PREFIX}-ocr-passport")
+    QUEUE_EXTRACTED_NAME: str = os.getenv("QUEUE_EXTRACTED_NAME", f"{SERVICE_PREFIX}-extracted")
+    QUEUE_WEBHOOK_NAME: str = os.getenv("QUEUE_WEBHOOK_NAME", f"{SERVICE_PREFIX}-webhook")
+    
+    LAMBDA_HANDLER_NAME: str = os.getenv("LAMBDA_HANDLER_NAME", f"{SERVICE_PREFIX}-handler-documents")
+    LAMBDA_OCR_DNI_NAME: str = os.getenv("LAMBDA_OCR_DNI_NAME", f"{SERVICE_PREFIX}-worker-ocr-dni")
+    LAMBDA_OCR_PASSPORT_NAME: str = os.getenv("LAMBDA_OCR_PASSPORT_NAME", f"{SERVICE_PREFIX}-worker-ocr-passport")
+    LAMBDA_WEBHOOK_NAME: str = os.getenv("LAMBDA_WEBHOOK_NAME", f"{SERVICE_PREFIX}-worker-webhook")
     
     MOCK_QUEUE_DIR: str = os.getenv("MOCK_QUEUE_DIR", "./data/queues")
     SQLITE_DB_PATH: str = os.getenv("SQLITE_DB_PATH", "./data/kyc.db")

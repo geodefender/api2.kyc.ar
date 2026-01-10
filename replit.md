@@ -4,10 +4,12 @@
 Microservicio event-driven en Python para procesamiento OCR de documentos de identidad argentinos (DNI y Pasaporte). Arquitectura diseñada para AWS Lambda + SQS, simulable completamente en local.
 
 ## Recent Changes
-- Initial project setup (January 2026)
-- Implemented full monorepo structure with Handler + Workers + Queue abstraction
-- Added SQLite persistence layer
-- Created DNI and Passport OCR strategies
+- January 2026: Initial project setup
+- Added idempotency support (hash de imagen + client_id + document_type)
+- Added DLQ (Dead Letter Queue) support with structured error logging
+- Added webhook dispatcher worker with HMAC signature and retries
+- Updated naming convention to `kyc-*` for AWS resources
+- Added AWS configuration for memory/timeout per Lambda
 
 ## User Preferences
 - Language: Spanish for communication, English for code
@@ -20,26 +22,39 @@ Microservicio event-driven en Python para procesamiento OCR de documentos de ide
 ### Structure
 ```
 kyc_platform/
-├── api_handler/      # FastAPI Handler (port 5000)
+├── api_handler/          # FastAPI Handler (port 5000)
 ├── workers/
-│   ├── ocr_dni/      # DNI Worker (PDF417 + OCR)
-│   └── ocr_passport/ # Passport Worker (MRZ)
-├── queue/            # EventQueue abstraction
-├── contracts/        # Events + Models
-├── persistence/      # SQLite repository
-├── runner/           # Local pipeline simulation
-└── shared/           # Config + Logging
+│   ├── ocr_dni/          # DNI Worker (PDF417 + OCR)
+│   ├── ocr_passport/     # Passport Worker (MRZ)
+│   └── webhook_dispatcher/ # Webhook notifications
+├── queue/                # EventQueue abstraction + DLQ
+├── contracts/            # Events + Models
+├── persistence/          # SQLite repository
+├── runner/               # Local pipeline simulation
+└── shared/               # Config + Logging + AWS Config
 ```
 
 ### Key Files
 - `kyc_platform/api_handler/main.py` - FastAPI entrypoint
 - `kyc_platform/workers/ocr_dni/lambda_function.py` - DNI Lambda handler
 - `kyc_platform/workers/ocr_passport/lambda_function.py` - Passport Lambda handler
+- `kyc_platform/workers/webhook_dispatcher/lambda_function.py` - Webhook Lambda handler
 - `kyc_platform/runner/local_pipeline.py` - End-to-end simulation
 
 ### Running
 - API Server: `python -m kyc_platform.api_handler.main`
 - Local Pipeline: `python -m kyc_platform.runner.local_pipeline`
+
+### AWS Resource Naming
+- Lambdas: `kyc-handler-documents`, `kyc-worker-ocr-dni`, `kyc-worker-ocr-passport`, `kyc-worker-webhook`
+- SQS Queues: `kyc-ocr-dni`, `kyc-ocr-passport`, `kyc-extracted`, `kyc-webhook`
+- DLQ: `kyc-ocr-dni-dlq`, `kyc-ocr-passport-dlq`
+
+### Production Features
+- Idempotency: Duplicate detection via SHA256 hash
+- DLQ: Dead letter queue for failed messages
+- Webhook: HMAC-signed notifications with retry/backoff
+- Configurable timeouts and memory per Lambda
 
 ### Dependencies
 - FastAPI + Uvicorn (API)

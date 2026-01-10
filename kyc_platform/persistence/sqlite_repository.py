@@ -37,7 +37,8 @@ class SQLiteDocumentRepository(DocumentRepository):
                     extracted_data TEXT,
                     confidence REAL,
                     processing_time_ms INTEGER,
-                    errors TEXT
+                    errors TEXT,
+                    idempotency_key TEXT
                 )
             """)
             conn.execute("""
@@ -45,6 +46,9 @@ class SQLiteDocumentRepository(DocumentRepository):
             """)
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_status ON documents(status)
+            """)
+            conn.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_idempotency_key ON documents(idempotency_key)
             """)
             conn.commit()
     
@@ -62,6 +66,7 @@ class SQLiteDocumentRepository(DocumentRepository):
             confidence=row["confidence"],
             processing_time_ms=row["processing_time_ms"],
             errors=json.loads(row["errors"]) if row["errors"] else None,
+            idempotency_key=row["idempotency_key"] if "idempotency_key" in row.keys() else None,
         )
     
     def save(self, record: DocumentRecord) -> bool:
@@ -72,8 +77,8 @@ class SQLiteDocumentRepository(DocumentRepository):
                     INSERT INTO documents 
                     (document_id, verification_id, client_id, document_type, status, 
                      image_ref, created_at, updated_at, extracted_data, confidence, 
-                     processing_time_ms, errors)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     processing_time_ms, errors, idempotency_key)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         record.document_id,
@@ -88,6 +93,7 @@ class SQLiteDocumentRepository(DocumentRepository):
                         record.confidence,
                         record.processing_time_ms,
                         json.dumps(record.errors) if record.errors else None,
+                        record.idempotency_key,
                     ),
                 )
                 conn.commit()
@@ -96,6 +102,14 @@ class SQLiteDocumentRepository(DocumentRepository):
         except Exception as e:
             logger.error(f"Failed to save document: {e}")
             return False
+    
+    def get_by_idempotency_key(self, idempotency_key: str) -> Optional[DocumentRecord]:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM documents WHERE idempotency_key = ?",
+                (idempotency_key,),
+            ).fetchone()
+            return self._row_to_record(row) if row else None
     
     def get_by_id(self, document_id: str) -> Optional[DocumentRecord]:
         with self._get_connection() as conn:

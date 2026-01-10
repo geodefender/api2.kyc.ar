@@ -18,6 +18,10 @@ class DocumentRepository(ABC):
         pass
     
     @abstractmethod
+    def get_by_idempotency_key(self, idempotency_key: str) -> Optional[DocumentRecord]:
+        pass
+    
+    @abstractmethod
     def update(self, record: DocumentRecord) -> bool:
         pass
     

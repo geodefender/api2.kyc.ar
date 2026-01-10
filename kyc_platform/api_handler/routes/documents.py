@@ -1,6 +1,5 @@
 import base64
 import os
-import uuid
 from fastapi import APIRouter, HTTPException
 
 from kyc_platform.api_handler.schemas import (
@@ -10,6 +9,7 @@ from kyc_platform.api_handler.schemas import (
     ErrorResponse,
 )
 from kyc_platform.api_handler.services.id_generator import generate_document_id, generate_verification_id
+from kyc_platform.api_handler.services.idempotency import generate_idempotency_key
 from kyc_platform.api_handler.services.enqueue import enqueue_service
 from kyc_platform.contracts.models import DocumentRecord
 from kyc_platform.persistence import get_repository
@@ -43,6 +43,30 @@ def save_image(image_base64: str, document_id: str) -> str:
     responses={400: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
 )
 async def upload_document(request: DocumentUploadRequest):
+    repository = get_repository()
+    
+    idempotency_key = generate_idempotency_key(
+        request.client_id,
+        request.document_type,
+        request.image,
+    )
+    
+    existing = repository.get_by_idempotency_key(idempotency_key)
+    if existing:
+        logger.info(
+            "Duplicate request detected, returning existing document",
+            extra={
+                "document_id": existing.document_id,
+                "idempotency_key": idempotency_key[:16] + "...",
+            },
+        )
+        return DocumentUploadResponse(
+            ok=True,
+            document_id=existing.document_id,
+            verification_id=existing.verification_id,
+            status=existing.status.value,
+        )
+    
     document_id = generate_document_id()
     verification_id = generate_verification_id()
     
@@ -69,9 +93,9 @@ async def upload_document(request: DocumentUploadRequest):
         client_id=request.client_id,
         document_type=request.document_type,
         image_ref=image_ref,
+        idempotency_key=idempotency_key,
     )
     
-    repository = get_repository()
     if not repository.save(record):
         raise HTTPException(status_code=500, detail="Failed to save document record")
     
