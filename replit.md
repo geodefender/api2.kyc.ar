@@ -24,6 +24,13 @@ Microservicio event-driven en Python para procesamiento OCR de documentos de ide
   - All strategies now return `{source, fields, confidence}` format
   - source values: "pdf417", "ocr", "ocr_fallback", "error", "none"
   - normalize_image: each step wrapped with try/except, always returns valid image
+- **Text normalization improvements (Jan 10, 2026)**:
+  - Added text_normalizers.py module with specialized extraction helpers
+  - normalize_document_number(): removes dots/spaces (33.116.561 → 33116561)
+  - normalize_bilingual_date(): converts AGO/AUG → 08 for bilingual dates
+  - extract_value_after_label(): handles label/value on separate lines
+  - Improved document number extraction prioritizing XX.XXX.XXX format
+  - Real DNI testing: 5-7 fields extracted, 0.85-0.90 confidence
 
 ## User Preferences
 - Language: Spanish for communication, English for code
