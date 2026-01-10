@@ -1,0 +1,233 @@
+Perfecto. Acá tenés EL PRINT FINAL, 100% operativo, sin opiniones, sin contexto, sin explicaciones, escrito para que Replit implemente exactamente esto y nada más.
+
+Copiar y pegar tal cual.
+
+⸻
+
+PRINT FINAL PARA REPLIT
+
+IMPLEMENTACIÓN OBLIGATORIA – HEURÍSTICA DNI ARGENTINO (PRODUCCIÓN)
+
+⸻
+
+OBJETIVO
+
+Implementar detección heurística robusta de DNI argentino (frente / dorso / viejo) ANTES del OCR, usando solo reglas determinísticas, sin ML, sin entrenamiento.
+
+Esta lógica NO existe actualmente y debe agregarse al worker-ocr-dni.
+
+⸻
+
+RESTRICCIONES
+	•	❌ No usar machine learning
+	•	❌ No usar modelos entrenados
+	•	❌ No usar clasificadores externos
+	•	✔️ Usar OpenCV + OCR genérico
+	•	✔️ Código Python
+	•	✔️ Integrar sin romper el pipeline existente
+
+⸻
+
+UBICACIÓN EN EL REPO (OBLIGATORIA)
+
+Agregar estos módulos:
+
+worker-ocr-dni/
+├── preprocess/
+│   └── normalize.py
+├── heuristics/
+│   └── dni_heuristic_analyzer.py
+├── strategies/
+│   ├── dni_new_front.py
+│   ├── dni_new_back.py
+│   └── dni_old.py
+└── processor.py   # modificar
+
+
+⸻
+
+1️⃣ PREPROCESAMIENTO (normalize.py)
+
+Implementar función normalize_image(image) que haga SIEMPRE:
+	1.	Auto-rotate / deskew
+	2.	Recorte de márgenes blancos (background trim)
+	3.	Resize a ancho estándar ≈ 1200 px
+	4.	CLAHE suave en canal L (LAB)
+	5.	Si hay mucho fondo:
+	•	detectar mayor contorno rectangular
+	•	recortar bounding box del documento
+
+Salida: imagen normalizada lista para análisis.
+
+⸻
+
+2️⃣ HEURÍSTICA DNI (dni_heuristic_analyzer.py)
+
+Implementar clase DniHeuristicAnalyzer.
+
+INPUT
+	•	Imagen normalizada (OpenCV / PIL)
+
+OUTPUT
+
+{
+  "document_variant": "dni_new_front | dni_new_back | dni_old | unknown",
+  "confidence": 0.0,
+  "signals": {
+    "pdf417_score": 0.0,
+    "mrz_score": 0.0,
+    "dni_front_score": 0.0,
+    "dni_old_score": 0.0,
+    "notes": []
+  }
+}
+
+
+⸻
+
+3️⃣ HEURÍSTICAS OBLIGATORIAS
+
+A) PDF417 Detection (tolerante a parcial)
+
+Detectar patrón de barcode aunque esté incompleto:
+	•	Alta densidad blanco/negro
+	•	Repetición vertical de módulos
+	•	Relación ancho/alto aproximada 2.5–3.5
+	•	Ubicación preferente:
+	•	x > 60% del ancho
+	•	y > 55% del alto
+
+Score compuesto:
+
+pdf417_score =
+  0.5 * density_score +
+  0.3 * vertical_repetition_score +
+  0.2 * position_score
+
+Threshold:
+
+pdf417_score >= 0.55
+
+
+⸻
+
+B) MRZ Detection (alineación + regex tolerante)
+	•	OCR rápido (baja resolución)
+	•	Buscar ≥2 líneas:
+	•	alineadas horizontalmente
+	•	separación vertical constante
+	•	Regex:
+
+^[A-Z0-9<]{20,44}$
+
+	•	Bonus si contiene ARG o ID
+
+Threshold:
+
+mrz_score >= 0.60
+
+
+⸻
+
+C) DNI NUEVO – FRENTE
+
+Detectar frente aunque falle el detector de rostro:
+	•	Rostro o bloque tipo “foto carnet” en lado izquierdo
+	•	textura humana
+	•	tonos piel
+	•	relación ancho/alto de foto carnet
+	•	Texto bilingüe esperado:
+	•	“Surname”
+	•	“Name”
+	•	“Nationality”
+	•	Firma manuscrita a la derecha
+	•	Holograma circular (alta reflectancia, borde circular)
+
+Threshold:
+
+dni_front_score >= 0.60
+
+
+⸻
+
+D) DNI VIEJO
+	•	Fondo uniforme
+	•	Foto a la derecha
+	•	Texto “NUMERO DE DOCUMENTO”
+	•	Penalizar si hay señales de PDF417 o MRZ
+
+Threshold:
+
+dni_old_score >= 0.60
+
+
+⸻
+
+4️⃣ DECISIÓN FINAL (OBLIGATORIA)
+
+Aplicar en este orden exacto:
+
+if pdf417_score >= 0.55:
+    document_variant = "dni_new_back"
+elif mrz_score >= 0.60:
+    document_variant = "dni_new_front"
+elif dni_front_score >= 0.60:
+    document_variant = "dni_new_front"
+elif dni_old_score >= 0.60:
+    document_variant = "dni_old"
+else:
+    document_variant = "unknown"
+
+
+⸻
+
+5️⃣ INTEGRACIÓN EN processor.py (OBLIGATORIA)
+
+Modificar el flujo del worker:
+
+imagen original
+  ↓
+normalize_image()
+  ↓
+DniHeuristicAnalyzer()
+  ↓
+document_variant + signals
+  ↓
+seleccionar strategy OCR específica
+  ↓
+OCR pesado + parsing
+
+❌ No ejecutar OCR pesado antes de la heurística.
+
+⸻
+
+6️⃣ LOGGING / SEGURIDAD
+	•	Loguear solo:
+	•	scores
+	•	variant
+	•	notes
+	•	❌ Nunca loguear:
+	•	imagen
+	•	MRZ completa
+	•	PDF417 raw
+	•	datos personales
+
+⸻
+
+7️⃣ CALIDAD
+	•	Código modular
+	•	Scores ajustables
+	•	Diseñado para tests con imágenes reales
+	•	Sin dependencias innecesarias
+
+⸻
+
+RESULTADO ESPERADO
+	•	Detección robusta en condiciones reales
+	•	Tolerante a ruido, mala luz, recortes
+	•	Explicable y ajustable
+	•	Lista para producción KYC
+
+⸻
+
+FIN DEL PRINT.
