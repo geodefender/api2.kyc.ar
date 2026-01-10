@@ -67,7 +67,14 @@ kyc_platform/
 
 ### Running
 - API Server: `python -m kyc_platform.api_handler.main`
+- AWS Simulator: `python simulacion-de-aws/worker_simulator.py`
 - Local Pipeline: `python -m kyc_platform.runner.local_pipeline`
+
+### Local Development Flow
+1. Start both workflows: "KYC API Server" and "AWS Simulator"
+2. POST `/documents` to upload a document
+3. The simulator automatically processes the queue every 2 seconds
+4. GET `/documents/{id}` to check status and extracted data
 
 ### AWS Resource Naming
 - Lambdas: `kyc-handler-documents`, `kyc-worker-ocr-dni`, `kyc-worker-ocr-passport`, `kyc-worker-webhook`
