@@ -1,4 +1,5 @@
 import base64
+import json
 import os
 from fastapi import APIRouter, HTTPException
 
@@ -173,6 +174,71 @@ async def get_document_status(document_id: str):
         processing_time_ms=record.processing_time_ms,
         errors=record.errors,
     )
+
+
+@router.post(
+    "/process",
+    summary="Process queued documents (local development only)",
+    description="""
+Manually trigger OCR processing for documents in the queue.
+
+**Note:** This endpoint is for local development only. In production, 
+documents are processed automatically by Lambda workers consuming from SQS.
+
+**Parameters:**
+- `max_messages`: Maximum number of documents to process (default: 10)
+    """,
+)
+async def process_queue(max_messages: int = 10):
+    from kyc_platform.queue import get_queue
+    from kyc_platform.workers.ocr_dni.lambda_function import handler as dni_handler
+    from kyc_platform.workers.ocr_passport.lambda_function import handler as passport_handler
+    
+    if not config.is_local():
+        raise HTTPException(
+            status_code=403,
+            detail="This endpoint is only available in local development mode",
+        )
+    
+    results = {"dni": [], "passport": []}
+    queue = get_queue()
+    
+    dni_messages = queue.consume("kyc-ocr-dni", max_messages)
+    
+    if dni_messages:
+        event = {"Records": [{"body": m["body"], "receiptHandle": m["receipt_handle"]} for m in dni_messages]}
+        try:
+            result = dni_handler(event, None)
+            body = json.loads(result.get("body", "{}")) if isinstance(result.get("body"), str) else result
+            results["dni"] = body.get("results", [])
+            for m in dni_messages:
+                queue.delete_message("kyc-ocr-dni", m["receipt_handle"])
+        except Exception as e:
+            logger.error(f"DNI processing failed: {e}")
+            results["dni"] = [{"error": str(e)}]
+    
+    passport_messages = queue.consume("kyc-ocr-passport", max_messages)
+    
+    if passport_messages:
+        event = {"Records": [{"body": m["body"], "receiptHandle": m["receipt_handle"]} for m in passport_messages]}
+        try:
+            result = passport_handler(event, None)
+            body = json.loads(result.get("body", "{}")) if isinstance(result.get("body"), str) else result
+            results["passport"] = body.get("results", [])
+            for m in passport_messages:
+                queue.delete_message("kyc-ocr-passport", m["receipt_handle"])
+        except Exception as e:
+            logger.error(f"Passport processing failed: {e}")
+            results["passport"] = [{"error": str(e)}]
+    
+    total_processed = len(results["dni"]) + len(results["passport"])
+    
+    return {
+        "ok": True,
+        "processed": total_processed,
+        "results": results,
+        "message": f"Processed {total_processed} document(s)" if total_processed > 0 else "No documents in queue",
+    }
 
 
 @router.get(
