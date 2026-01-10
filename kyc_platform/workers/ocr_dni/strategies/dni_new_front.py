@@ -8,6 +8,14 @@ except ImportError:
     pytesseract = None
 
 from kyc_platform.workers.ocr_dni.strategies.base import DNIOCRStrategy
+from kyc_platform.workers.ocr_dni.strategies.text_normalizers import (
+    normalize_bilingual_date,
+    extract_value_after_label,
+    extract_document_number,
+    extract_tramite,
+    extract_sex,
+    extract_ejemplar,
+)
 from kyc_platform.shared.logging import get_logger
 
 logger = get_logger(__name__)
@@ -52,77 +60,86 @@ class DNINewFrontStrategy(DNIOCRStrategy):
         text_upper = text.upper()
         lines = [line.strip() for line in text.split("\n") if line.strip()]
         
-        dni_pattern = r"\b(\d{7,8})\b"
-        for line in lines:
-            match = re.search(dni_pattern, line)
-            if match:
-                fields["numero_documento"] = match.group(1)
-                break
+        doc_num = extract_document_number(lines)
+        if doc_num:
+            fields["numero_documento"] = doc_num
         
-        apellido_patterns = [
-            r"APELLIDO[S]?\s*[/]?\s*SURNAME[S]?\s*[:\-]?\s*(.+)",
-            r"SURNAME[S]?\s*[/]?\s*APELLIDO[S]?\s*[:\-]?\s*(.+)",
-            r"APELLIDO[S]?\s*[:\-]?\s*(.+)",
-        ]
-        for pattern in apellido_patterns:
-            match = re.search(pattern, text_upper)
-            if match:
-                value = match.group(1).strip()
-                value = re.sub(r'[^A-ZÁÉÍÓÚÑ\s]', '', value)
-                if value:
-                    fields["apellido"] = value.title()
-                break
+        apellido = extract_value_after_label(
+            lines,
+            [r'APELLIDO[S]?\s*[/]?\s*SURNAME', r'SURNAME\s*[/]?\s*APELLIDO']
+        )
+        if apellido:
+            fields["apellido"] = apellido
         
-        nombre_patterns = [
-            r"NOMBRE[S]?\s*[/]?\s*NAME[S]?\s*[:\-]?\s*(.+)",
-            r"NAME[S]?\s*[/]?\s*NOMBRE[S]?\s*[:\-]?\s*(.+)",
-            r"NOMBRE[S]?\s*[:\-]?\s*(.+)",
-        ]
-        for pattern in nombre_patterns:
-            match = re.search(pattern, text_upper)
-            if match:
-                value = match.group(1).strip()
-                value = re.sub(r'[^A-ZÁÉÍÓÚÑ\s]', '', value)
-                if value:
-                    fields["nombre"] = value.title()
-                break
+        nombre = extract_value_after_label(
+            lines,
+            [r'NOMBRE[S]?\s*[/]?\s*NAME', r'NAME\s*[/]?\s*NOMBRE']
+        )
+        if nombre:
+            fields["nombre"] = nombre
         
-        if "MASCULINO" in text_upper or re.search(r'\bM\b', text_upper):
-            fields["sexo"] = "M"
-        elif "FEMENINO" in text_upper or re.search(r'\bF\b', text_upper):
-            fields["sexo"] = "F"
+        sexo = extract_sex(text_upper)
+        if sexo:
+            fields["sexo"] = sexo
         
-        nationality_patterns = [
-            r"NACIONALIDAD\s*[/]?\s*NATIONALITY\s*[:\-]?\s*(.+)",
-            r"NACIONALIDAD\s*[:\-]?\s*(.+)",
-        ]
-        for pattern in nationality_patterns:
-            match = re.search(pattern, text_upper)
-            if match:
-                value = match.group(1).strip()
-                if "ARGENTIN" in value:
-                    fields["nacionalidad"] = "ARGENTINA"
-                break
+        if "ARGENTIN" in text_upper:
+            fields["nacionalidad"] = "ARGENTINA"
         
-        date_pattern = r"\b(\d{2}[/\-\.]\d{2}[/\-\.]\d{4})\b"
-        dates_found = re.findall(date_pattern, text)
+        ejemplar = extract_ejemplar(text_upper)
+        if ejemplar:
+            fields["ejemplar"] = ejemplar
         
-        if len(dates_found) >= 1:
-            fields["fecha_nacimiento"] = dates_found[0]
-        if len(dates_found) >= 2:
-            fields["fecha_vencimiento"] = dates_found[1]
+        tramite = extract_tramite(lines)
+        if tramite:
+            fields["tramite"] = tramite
+        
+        self._extract_dates(lines, text_upper, fields)
         
         return fields
+    
+    def _extract_dates(self, lines: list[str], text_upper: str, fields: dict[str, Any]) -> None:
+        date_labels = [
+            (r'FECHA\s*DE\s*NACIMIENTO|DATE\s*OF\s*BIRTH', 'fecha_nacimiento'),
+            (r'FECHA\s*DE\s*EMISI[OÓ]N|DATE\s*OF\s*ISSUE', 'fecha_emision'),
+            (r'FECHA\s*DE\s*VENCIMIENTO|DATE\s*OF\s*EXPIRY', 'fecha_vencimiento'),
+        ]
+        
+        for i, line in enumerate(lines):
+            line_upper = line.upper()
+            for pattern, field_name in date_labels:
+                if re.search(pattern, line_upper):
+                    if i + 1 < len(lines):
+                        date_str = normalize_bilingual_date(lines[i + 1])
+                        if date_str:
+                            fields[field_name] = date_str
+                            break
+                    
+                    date_on_same_line = re.search(
+                        r'(\d{1,2}\s+[A-Z]{3,}\s*[/]?\s*[A-Z]*\s+\d{4})',
+                        line_upper
+                    )
+                    if date_on_same_line:
+                        date_str = normalize_bilingual_date(date_on_same_line.group(1))
+                        if date_str:
+                            fields[field_name] = date_str
     
     def _calculate_confidence(self, fields: dict[str, Any]) -> None:
         fields_found = sum(1 for v in fields.values() if v)
         
-        if fields.get("numero_documento") and fields_found >= 3:
+        has_doc = bool(fields.get("numero_documento"))
+        has_name = bool(fields.get("nombre") or fields.get("apellido"))
+        has_dates = bool(fields.get("fecha_nacimiento"))
+        
+        if has_doc and has_name and has_dates and fields_found >= 5:
+            self._confidence = 0.90
+        elif has_doc and has_name and fields_found >= 4:
             self._confidence = 0.85
-        elif fields.get("numero_documento"):
+        elif has_doc and fields_found >= 3:
             self._confidence = 0.75
+        elif has_doc:
+            self._confidence = 0.65
         elif fields_found >= 2:
-            self._confidence = 0.60
+            self._confidence = 0.50
         else:
             self._confidence = 0.30
     
