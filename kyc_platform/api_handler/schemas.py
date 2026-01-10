@@ -42,6 +42,11 @@ class DocumentUploadRequest(BaseModel):
         description="Secret key for HMAC-SHA256 webhook signature verification",
         json_schema_extra={"example": "your-webhook-secret"},
     )
+    force_reprocess: bool = Field(
+        default=False,
+        description="Skip idempotency check and force reprocessing of the image",
+        json_schema_extra={"example": False},
+    )
 
     model_config = {
         "json_schema_extra": {

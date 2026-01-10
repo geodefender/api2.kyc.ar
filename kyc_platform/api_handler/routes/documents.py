@@ -1,6 +1,7 @@
 import base64
 import json
 import os
+import time
 from fastapi import APIRouter, HTTPException
 
 from kyc_platform.api_handler.schemas import (
@@ -65,26 +66,34 @@ Duplicate requests (same client_id + document_type + image) return the existing 
 async def upload_document(request: DocumentUploadRequest):
     repository = get_repository()
     
-    idempotency_key = generate_idempotency_key(
+    base_idempotency_key = generate_idempotency_key(
         request.client_id,
         request.document_type,
         request.image,
     )
     
-    existing = repository.get_by_idempotency_key(idempotency_key)
-    if existing:
+    if not request.force_reprocess:
+        existing = repository.get_by_idempotency_key(base_idempotency_key)
+        if existing:
+            logger.info(
+                "Duplicate request detected, returning existing document",
+                extra={
+                    "document_id": existing.document_id,
+                    "idempotency_key": base_idempotency_key[:16] + "...",
+                },
+            )
+            return DocumentUploadResponse(
+                ok=True,
+                document_id=existing.document_id,
+                verification_id=existing.verification_id,
+                status=ProcessingStatus(existing.status.value),
+            )
+        idempotency_key = base_idempotency_key
+    else:
+        idempotency_key = f"{base_idempotency_key}_{int(time.time() * 1000)}"
         logger.info(
-            "Duplicate request detected, returning existing document",
-            extra={
-                "document_id": existing.document_id,
-                "idempotency_key": idempotency_key[:16] + "...",
-            },
-        )
-        return DocumentUploadResponse(
-            ok=True,
-            document_id=existing.document_id,
-            verification_id=existing.verification_id,
-            status=ProcessingStatus(existing.status.value),
+            "Force reprocess requested, generating unique idempotency key",
+            extra={"idempotency_key": idempotency_key[:16] + "..."},
         )
     
     document_id = generate_document_id()
