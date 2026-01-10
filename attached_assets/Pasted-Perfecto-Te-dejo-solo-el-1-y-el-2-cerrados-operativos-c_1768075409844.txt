@@ -1,0 +1,190 @@
+Perfecto. Te dejo solo el 1 y el 2, cerrados, operativos, copiables, sin tests ni teoría.
+Esto es implementación literal.
+
+⸻
+
+1️⃣ IMPLEMENTACIÓN EXACTA DE CADA Strategy.process()
+
+Regla global (no negociar):
+Cada Strategy NO detecta, NO decide, NO valida.
+Solo extrae usando el método que le corresponde.
+
+⸻
+
+🟦 DniNewBackStrategy.process(image)
+
+Responsabilidad única: PDF417 primero, OCR solo como fallback.
+
+class DniNewBackStrategy:
+    def process(self, image):
+        # PDF417 es la fuente primaria
+        pdf417_raw = decode_pdf417(image)
+
+        if pdf417_raw:
+            fields = parse_pdf417(pdf417_raw)
+            return {
+                "source": "pdf417",
+                "fields": fields,
+                "confidence": 0.95
+            }
+
+        # Fallback OCR SOLO si el barcode falla
+        ocr_text = run_ocr(image)
+        fields = parse_dni_text(ocr_text)
+
+        return {
+            "source": "ocr_fallback",
+            "fields": fields,
+            "confidence": 0.60
+        }
+
+❌ No MRZ
+❌ No heurística
+❌ No logs de raw data
+
+⸻
+
+🟦 DniNewFrontStrategy.process(image)
+
+Responsabilidad única: OCR estructurado del frente.
+
+class DniNewFrontStrategy:
+    def process(self, image):
+        ocr_text = run_ocr(image)
+
+        fields = {
+            "apellido": extract_field(ocr_text, ["APELLIDO", "SURNAME"]),
+            "nombre": extract_field(ocr_text, ["NOMBRE", "NAME"]),
+            "sexo": extract_field(ocr_text, ["SEXO", "SEX"]),
+            "nacionalidad": extract_field(ocr_text, ["NACIONALIDAD", "NATIONALITY"]),
+            "fecha_nacimiento": extract_date(ocr_text)
+        }
+
+        return {
+            "source": "ocr",
+            "fields": fields,
+            "confidence": 0.75
+        }
+
+❌ No PDF417
+❌ No MRZ
+❌ No parsing de dorso
+
+⸻
+
+🟦 DniOldStrategy.process(image)
+
+Responsabilidad única: OCR flexible (layout no estándar).
+
+class DniOldStrategy:
+    def process(self, image):
+        ocr_text = run_ocr(image)
+
+        fields = {
+            "numero_documento": extract_number(ocr_text),
+            "apellido": extract_field(ocr_text, ["APELLIDO"]),
+            "nombre": extract_field(ocr_text, ["NOMBRE"]),
+            "fecha_nacimiento": extract_date(ocr_text)
+        }
+
+        return {
+            "source": "ocr",
+            "fields": fields,
+            "confidence": 0.65
+        }
+
+❌ No PDF417
+❌ No MRZ
+❌ No layout moderno
+
+⸻
+
+2️⃣ IMPLEMENTACIÓN FINAL DE normalize_image()
+
+Regla global:
+normalize_image() SIEMPRE se ejecuta, SIEMPRE devuelve imagen, NUNCA aborta.
+
+⸻
+
+📄 preprocess/normalize.py
+
+def normalize_image(image):
+    # 1. Deskew automático (rotación)
+    try:
+        image = deskew(image)
+    except Exception:
+        pass
+
+    # 2. Convertir a escala de grises
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    # 3. Recorte de fondo blanco
+    try:
+        gray = trim_background(gray)
+    except Exception:
+        pass
+
+    # 4. Detectar documento lejano y recortar bounding box
+    try:
+        doc_box = find_largest_rectangular_contour(gray)
+        if doc_box is not None:
+            gray = crop_to_box(gray, doc_box)
+    except Exception:
+        pass
+
+    # 5. Resize a ancho estándar
+    try:
+        gray = resize_to_width(gray, 1200)
+    except Exception:
+        pass
+
+    # 6. CLAHE suave para bajo contraste
+    try:
+        gray = apply_clahe(gray)
+    except Exception:
+        pass
+
+    return gray
+
+
+⸻
+
+🔒 Reglas obligatorias de normalización
+	•	✔️ Orden exacto de pasos
+	•	✔️ Cada paso aislado con try/except
+	•	✔️ Nunca devolver None
+	•	✔️ No cambiar resolución después del OCR
+	•	❌ No hacer OCR acá
+	•	❌ No loguear imagen
+
+⸻
+
+📌 Helpers que deben existir (sin lógica extra)
+
+deskew(image)
+trim_background(image)
+find_largest_rectangular_contour(image)
+crop_to_box(image, box)
+resize_to_width(image, width)
+apply_clahe(image)
+
+Cada helper:
+	•	hace una sola cosa
+	•	si falla → excepción (capturada arriba)
+
+⸻
+
+✅ ESTADO FINAL ESPERADO
+
+Después de implementar solo esto:
+	•	El OCR recibe imágenes limpias
+	•	PDF417 parcial no rompe
+	•	Documento lejano se corrige
+	•	Cada strategy hace solo lo suyo
+	•	El pipeline queda determinístico y robusto
+
+⸻
+
+Cuando quieras seguimos con:
+	•	helpers (deskew, trim_background) línea por línea
+	•	o tuning fino de thresholds reales por cliente

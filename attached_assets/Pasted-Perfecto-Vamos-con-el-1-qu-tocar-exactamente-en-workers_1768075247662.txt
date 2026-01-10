@@ -1,0 +1,175 @@
+Perfecto. Vamos con el 1:
+👉 qué tocar exactamente en workers/ocr_dni/processor.py, en qué orden, sin ambigüedad.
+
+No voy a opinar ni explicar teoría. Esto es instrucción directa para implementar.
+
+⸻
+
+🎯 OBJETIVO DEL CAMBIO EN processor.py
+
+Modificar el flujo para que ANTES de cualquier OCR pesado se ejecute:
+
+normalize_image
+→ DniHeuristicAnalyzer
+→ selección explícita de strategy
+→ OCR + parsing
+
+
+⸻
+
+📍 ESTADO ACTUAL (simplificado)
+
+Hoy processor.py hace conceptualmente algo así:
+
+image = load_image(...)
+pdf417 = try_pdf417(image)
+ocr_text = run_ocr(image)
+parsed = parse(ocr_text, pdf417)
+publish(parsed)
+
+❌ Esto es lo que hay que romper.
+
+⸻
+
+✅ FLUJO FINAL OBLIGATORIO
+
+image = load_image(...)
+image = normalize_image(image)
+analysis = DniHeuristicAnalyzer(image).analyze()
+strategy = select_strategy(analysis.document_variant)
+result = strategy.process(image)
+publish(result, analysis.signals)
+
+
+⸻
+
+🧩 CAMBIOS CONCRETOS EN processor.py
+
+1️⃣ IMPORTS (AGREGAR ARRIBA)
+
+from preprocess.normalize import normalize_image
+from heuristics.dni_heuristic_analyzer import DniHeuristicAnalyzer
+from strategies.dni_new_front import DniNewFrontStrategy
+from strategies.dni_new_back import DniNewBackStrategy
+from strategies.dni_old import DniOldStrategy
+
+⚠️ No borrar imports existentes de OCR / PDF417 / parser.
+
+⸻
+
+2️⃣ FUNCIÓN DE SELECCIÓN DE STRATEGY (AGREGAR)
+
+Agregar en el archivo (arriba o abajo, pero fuera del handler principal):
+
+def select_strategy(document_variant: str):
+    if document_variant == "dni_new_back":
+        return DniNewBackStrategy()
+    elif document_variant == "dni_new_front":
+        return DniNewFrontStrategy()
+    elif document_variant == "dni_old":
+        return DniOldStrategy()
+    else:
+        raise ValueError("Unsupported or unknown DNI variant")
+
+
+⸻
+
+3️⃣ MODIFICAR EL CORE DEL PROCESSOR
+
+📌 DONDE hoy cargás la imagen (ejemplo)
+
+Buscar algo como:
+
+image = load_image_from_s3(...)
+
+✏️ REEMPLAZAR el bloque siguiente completo por esto:
+
+# 1. Normalización obligatoria
+normalized_image = normalize_image(image)
+
+# 2. Heurística DNI (ANTES del OCR)
+analyzer = DniHeuristicAnalyzer(normalized_image)
+analysis = analyzer.analyze()
+
+document_variant = analysis["document_variant"]
+signals = analysis["signals"]
+
+logger.info(
+    "dni_heuristic_result",
+    extra={
+        "document_variant": document_variant,
+        "signals": signals
+    }
+)
+
+# 3. Selección explícita de strategy
+strategy = select_strategy(document_variant)
+
+# 4. OCR + parsing específico por variante
+result = strategy.process(normalized_image)
+
+❌ Eliminar / no ejecutar cualquier OCR o PDF417 antes de este bloque.
+
+⸻
+
+4️⃣ PUBLICACIÓN DEL RESULTADO (AJUSTAR)
+
+Donde hoy hacés publish_event(...), agregar signals y document_variant:
+
+publish_event(
+    event_type="document.extracted.v1",
+    payload={
+        **result,
+        "document_variant": document_variant,
+        "signals": signals
+    }
+)
+
+⚠️ signals es interno: no exponer en API pública si no querés, pero sí en eventos/logs.
+
+⸻
+
+5️⃣ MANEJO DE ERRORES (OBLIGATORIO)
+
+Envolver el bloque principal:
+
+try:
+    ...
+except ValueError as e:
+    logger.error("unsupported_dni_variant", exc_info=e)
+    raise
+
+No silenciar errores.
+Si document_variant == unknown → error explícito.
+
+⸻
+
+6️⃣ VALIDACIONES FINALES (CHECKLIST)
+
+Antes de dar esto por terminado, verificar:
+	•	❌ No se llama OCR antes de DniHeuristicAnalyzer
+	•	❌ No se intenta PDF417 fuera de DniNewBackStrategy
+	•	✔️ normalize_image() siempre se ejecuta
+	•	✔️ document_variant decide la estrategia
+	•	✔️ Logs NO incluyen imagen, MRZ raw ni PDF417 raw
+
+⸻
+
+🧠 RESULTADO FINAL
+
+Después de este cambio:
+	•	processor.py entiende qué está viendo
+	•	El OCR se ejecuta solo cuando corresponde
+	•	Las variantes reales que mandaste no rompen el pipeline
+	•	El sistema es explicable y ajustable
+
+⸻
+
+Próximo paso (cuando quieras)
+
+Puedo seguir con:
+	•	exactamente qué poner dentro de cada Strategy.process()
+	•	o revisión final del normalize_image()
+	•	o tests mínimos que deberían pasar sí o sí
+
+Decime cómo seguimos.

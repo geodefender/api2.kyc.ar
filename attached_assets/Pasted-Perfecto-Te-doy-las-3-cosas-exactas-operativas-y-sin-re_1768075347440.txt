@@ -1,0 +1,208 @@
+Perfecto. Te doy las 3 cosas, exactas, operativas y sin relleno, para que Replit implemente a rajatabla.
+Copiá/pegá cada bloque donde corresponda.
+
+⸻
+
+1️⃣ EXACTAMENTE QUÉ PONER EN CADA Strategy.process()
+
+A) DniNewBackStrategy.process(image)
+
+Responsabilidad exclusiva:
+➡️ Extraer PDF417 + OCR fallback solo si hace falta.
+
+class DniNewBackStrategy:
+    def process(self, image):
+        # 1. Intentar PDF417 (PRIORITARIO)
+        pdf417_data = decode_pdf417(image)
+
+        if pdf417_data:
+            return {
+                "source": "pdf417",
+                "fields": parse_pdf417(pdf417_data),
+                "confidence": 0.95
+            }
+
+        # 2. Fallback OCR (solo si PDF417 falla)
+        ocr_text = run_ocr(image)
+
+        return {
+            "source": "ocr_fallback",
+            "fields": parse_dni_text(ocr_text),
+            "confidence": 0.60
+        }
+
+❌ No detectar variante
+❌ No validar datos
+❌ No loguear contenido raw
+
+⸻
+
+B) DniNewFrontStrategy.process(image)
+
+Responsabilidad exclusiva:
+➡️ OCR estructurado del frente (sin PDF417).
+
+class DniNewFrontStrategy:
+    def process(self, image):
+        ocr_text = run_ocr(image)
+
+        fields = {
+            "apellido": extract_field(ocr_text, ["APELLIDO", "SURNAME"]),
+            "nombre": extract_field(ocr_text, ["NOMBRE", "NAME"]),
+            "nacionalidad": extract_field(ocr_text, ["NACIONALIDAD", "NATIONALITY"]),
+            "sexo": extract_field(ocr_text, ["SEXO", "SEX"]),
+            "fecha_nacimiento": extract_date(ocr_text)
+        }
+
+        return {
+            "source": "ocr",
+            "fields": fields,
+            "confidence": 0.75
+        }
+
+❌ No PDF417
+❌ No MRZ
+❌ No asumir dorso
+
+⸻
+
+C) DniOldStrategy.process(image)
+
+Responsabilidad exclusiva:
+➡️ OCR simple + parsing flexible.
+
+class DniOldStrategy:
+    def process(self, image):
+        ocr_text = run_ocr(image)
+
+        fields = {
+            "numero_documento": extract_number(ocr_text),
+            "apellido": extract_field(ocr_text, ["APELLIDO"]),
+            "nombre": extract_field(ocr_text, ["NOMBRE"]),
+            "fecha_nacimiento": extract_date(ocr_text)
+        }
+
+        return {
+            "source": "ocr",
+            "fields": fields,
+            "confidence": 0.65
+        }
+
+❌ No PDF417
+❌ No MRZ
+
+⸻
+
+2️⃣ REVISIÓN FINAL — normalize_image() (OBLIGATORIO)
+
+Implementar exactamente este pipeline, en este orden:
+
+def normalize_image(image):
+    # 1. Deskew (rotación automática)
+    image = deskew(image)
+
+    # 2. Convertir a gris
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    # 3. Trim de fondo blanco
+    image = trim_background(gray)
+
+    # 4. Detectar documento lejano
+    doc_box = find_largest_rectangular_contour(image)
+    if doc_box:
+        image = crop_to_box(image, doc_box)
+
+    # 5. Resize a ancho estándar
+    image = resize_to_width(image, 1200)
+
+    # 6. CLAHE suave (bajo contraste)
+    image = apply_clahe(image)
+
+    return image
+
+Reglas obligatorias:
+	•	❌ No saltar pasos
+	•	❌ No cambiar el orden
+	•	✔️ Si falla un paso, continuar con el siguiente
+	•	✔️ Nunca devolver None
+
+⸻
+
+3️⃣ TESTS MÍNIMOS QUE DEBEN PASAR SÍ O SÍ
+
+Implementar tests con tus imágenes reales.
+
+Test 1 — DNI nuevo dorso (PDF417 parcial)
+
+Input: imagen con barcode incompleto
+Esperado:
+
+document_variant == "dni_new_back"
+source == "pdf417" OR "ocr_fallback"
+confidence >= 0.55
+
+
+⸻
+
+Test 2 — DNI nuevo frente con mala luz
+
+Input: frente borroso / subexpuesto
+Esperado:
+
+document_variant == "dni_new_front"
+fields.apellido != null
+fields.nombre != null
+confidence >= 0.60
+
+
+⸻
+
+Test 3 — DNI viejo
+
+Input: DNI celeste antiguo
+Esperado:
+
+document_variant == "dni_old"
+fields.numero_documento != null
+confidence >= 0.60
+
+
+⸻
+
+Test 4 — Documento lejano con fondo
+
+Input: DNI pequeño dentro de imagen grande
+Esperado:
+
+normalize_image recorta documento
+document_variant != "unknown"
+
+
+⸻
+
+Test 5 — Caso inválido
+
+Input: imagen random
+Esperado:
+
+document_variant == "unknown"
+error controlado (no crash)
+
+
+⸻
+
+✅ RESULTADO FINAL GARANTIZADO
+
+Con esto exacto:
+	•	El pipeline entiende qué documento es
+	•	El OCR se ejecuta solo cuando corresponde
+	•	PDF417 parcial no rompe
+	•	Imágenes reales no caen
+	•	El sistema es explicable, robusto y ajustable
+
+⸻
+
+Si querés, el siguiente paso natural es:
+	•	escribir los helpers (deskew, trim_background, etc.)
+	•	o definir thresholds por cliente
+	•	o auditar performance (RAM / timeout Lambda)
