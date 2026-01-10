@@ -1,0 +1,228 @@
+Perfecto, ahora sí quedó clarísimo lo que necesitás 👍
+Querés que Replit te arme el ecosistema completo para poder simular end-to-end:
+	•	handler (API / edge)
+	•	generación de IDs
+	•	enqueue en SQS (mockeable)
+	•	worker OCR
+	•	contratos compartidos
+	•	todo reutilizable luego en AWS Lambda real
+
+Te dejo UN SOLO PROMPT, muy preciso, para que Replit entienda que tiene que armar la arquitectura completa, no solo el worker.
+
+⸻
+
+🔧 PROMPT ÚNICO PARA REPLIT
+
+Arquitectura completa: Handler + SQS + Workers (simulable localmente)
+
+Contexto general
+
+Estamos construyendo una arquitectura KYC event-driven, pensada para AWS Lambda + SQS, pero que debe poder simularse completamente en Replit en modo local.
+
+El objetivo es generar una base reusable para:
+	•	API Handler (FastAPI / edge)
+	•	Encolado de eventos (SQS real o mock)
+	•	Workers asincrónicos (Lambda-style)
+
+El código generado debe poder:
+	•	correr localmente en Replit (sin AWS)
+	•	luego separarse fácilmente en Lambdas individuales para AWS
+
+⸻
+
+🎯 OBJETIVO GENERAL
+
+Generar un monorepo Python con:
+	1.	API Handler (FastAPI)
+	•	recibe POST
+	•	valida
+	•	genera IDs
+	•	publica evento
+	•	responde ACK inmediato
+	2.	Event Queue (SQS abstraction)
+	•	implementación mock (in-memory / file)
+	•	interfaz idéntica a SQS real
+	3.	Worker OCR Identity
+	•	consume eventos
+	•	procesa
+	•	publica evento siguiente
+	4.	Contratos compartidos
+	•	eventos
+	•	modelos
+	•	IDs
+	•	logging
+
+⸻
+
+🧱 RESTRICCIONES IMPORTANTES
+	•	✔️ Python 3.10+
+	•	✔️ FastAPI solo para el handler
+	•	❌ Workers NO usan FastAPI
+	•	✔️ Todo debe poder ejecutarse localmente
+	•	✔️ Arquitectura preparada para AWS Lambda + SQS real
+	•	✔️ Cada componente desacoplado
+
+⸻
+
+📂 ESTRUCTURA DEL PROYECTO (OBLIGATORIA)
+
+kyc_platform/
+├── api_handler/
+│   ├── main.py                # FastAPI entrypoint
+│   ├── routes/
+│   │   └── documents.py
+│   ├── services/
+│   │   ├── id_generator.py
+│   │   └── enqueue.py
+│   └── schemas.py
+│
+├── workers/
+│   └── ocr_identity/
+│       ├── lambda_function.py
+│       ├── processor.py
+│       ├── detector.py
+│       ├── strategies/
+│       │   ├── base.py
+│       │   ├── dni.py
+│       │   └── passport.py
+│       └── publisher.py
+│
+├── queue/
+│   ├── base.py                # Queue interface
+│   ├── mock_queue.py          # Local simulation
+│   └── sqs_queue.py           # AWS SQS implementation (stub)
+│
+├── contracts/
+│   ├── events.py              # Event schemas + versions
+│   └── models.py              # Shared models
+│
+├── runner/
+│   └── local_pipeline.py      # Simula handler → queue → worker
+│
+├── shared/
+│   ├── logging.py
+│   └── config.py
+│
+├── requirements.txt
+└── README.md
+
+
+⸻
+
+1️⃣ API HANDLER (FastAPI)
+
+Endpoint requerido
+
+POST /documents
+
+Responsabilidades
+	•	validar input
+	•	generar:
+	•	document_id
+	•	verification_id
+	•	persistencia mock (en memoria o archivo)
+	•	publicar evento document.uploaded.v1
+	•	responder inmediatamente
+
+Response
+
+{
+  "ok": true,
+  "document_id": "doc_xxx",
+  "verification_id": "ver_xxx",
+  "status": "queued"
+}
+
+
+⸻
+
+2️⃣ EVENT QUEUE (ABSTRACCIÓN)
+
+Crear una interfaz genérica:
+
+class EventQueue:
+    def publish(event: dict): ...
+    def consume() -> list[dict]: ...
+
+Implementaciones
+	•	MockQueue → para Replit
+	•	SQSQueue → stub compatible con AWS
+
+⸻
+
+3️⃣ WORKER OCR IDENTITY
+
+Características
+	•	Lambda-style (lambda_function.py)
+	•	consume eventos desde EventQueue
+	•	detecta tipo de documento
+	•	ejecuta OCR (stub)
+	•	publica document.extracted.v1
+
+❌ No valida
+❌ No decide
+❌ No responde HTTP
+
+⸻
+
+4️⃣ CONTRATOS DE EVENTOS (CRÍTICO)
+
+Ejemplo document.uploaded.v1:
+
+{
+  "event": "document.uploaded.v1",
+  "document_id": "doc_123",
+  "verification_id": "ver_456",
+  "client_id": "demo",
+  "image_ref": "mock/image.jpg"
+}
+
+Ejemplo document.extracted.v1:
+
+{
+  "event": "document.extracted.v1",
+  "document_id": "doc_123",
+  "document_kind": "dni | passport",
+  "extracted_data": {},
+  "confidence": 0.9
+}
+
+
+⸻
+
+5️⃣ LOCAL PIPELINE RUNNER
+
+Crear un script que:
+	1.	Simule POST al handler
+	2.	Encole evento
+	3.	Ejecute worker
+	4.	Muestre eventos generados
+
+Esto es clave para validar el diseño sin AWS.
+
+⸻
+
+6️⃣ README (OBLIGATORIO)
+
+Debe explicar:
+	•	arquitectura
+	•	cómo correr todo en local
+	•	cómo separar cada módulo en Lambda real
+	•	cómo reemplazar MockQueue por SQS
+
+⸻
+
+🎯 RESULTADO ESPERADO
+
+Un proyecto que:
+	•	simula el flujo completo end-to-end
+	•	es 1:1 migrable a AWS Lambda
+	•	sirve como plantilla base para TODOS los workers
+	•	deja claro qué es handler, qué es worker y qué es infraestructura
+
+⸻
+
+Si querés, después de que Replit genere esto, el siguiente paso ideal es:
+	•	revisar si el diseño quedó bien desacoplado
+	•	marcar exactamente qué carpetas se transforman en Lambdas
+	•	o ayudarte a mapear esto a Terraform / SAM / CDK sin cambiar el código.
