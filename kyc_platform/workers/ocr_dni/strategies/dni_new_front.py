@@ -17,24 +17,38 @@ class DNINewFrontStrategy(DNIOCRStrategy):
     
     def __init__(self):
         self._confidence = 0.0
+        self._source = "ocr"
     
     def extract(self, image: Image.Image) -> dict[str, Any]:
         if pytesseract is None:
             logger.error("pytesseract not available")
-            return {}
+            return {
+                "source": "error",
+                "fields": {},
+                "confidence": 0.0,
+            }
         
         try:
             text = pytesseract.image_to_string(image, lang="spa")
-            result = self._parse_front_text(text)
+            fields = self._parse_front_text(text)
             
-            self._calculate_confidence(result)
-            return result
+            self._calculate_confidence(fields)
+            
+            return {
+                "source": self._source,
+                "fields": fields,
+                "confidence": self._confidence,
+            }
         except Exception as e:
             logger.error(f"DNI New Front OCR extraction failed: {e}")
-            return {}
+            return {
+                "source": "error",
+                "fields": {},
+                "confidence": 0.0,
+            }
     
     def _parse_front_text(self, text: str) -> dict[str, Any]:
-        result = {}
+        fields = {}
         text_upper = text.upper()
         lines = [line.strip() for line in text.split("\n") if line.strip()]
         
@@ -42,7 +56,7 @@ class DNINewFrontStrategy(DNIOCRStrategy):
         for line in lines:
             match = re.search(dni_pattern, line)
             if match:
-                result["numero_documento"] = match.group(1)
+                fields["numero_documento"] = match.group(1)
                 break
         
         apellido_patterns = [
@@ -56,7 +70,7 @@ class DNINewFrontStrategy(DNIOCRStrategy):
                 value = match.group(1).strip()
                 value = re.sub(r'[^A-ZÁÉÍÓÚÑ\s]', '', value)
                 if value:
-                    result["apellido"] = value.title()
+                    fields["apellido"] = value.title()
                 break
         
         nombre_patterns = [
@@ -70,13 +84,13 @@ class DNINewFrontStrategy(DNIOCRStrategy):
                 value = match.group(1).strip()
                 value = re.sub(r'[^A-ZÁÉÍÓÚÑ\s]', '', value)
                 if value:
-                    result["nombre"] = value.title()
+                    fields["nombre"] = value.title()
                 break
         
         if "MASCULINO" in text_upper or re.search(r'\bM\b', text_upper):
-            result["sexo"] = "M"
+            fields["sexo"] = "M"
         elif "FEMENINO" in text_upper or re.search(r'\bF\b', text_upper):
-            result["sexo"] = "F"
+            fields["sexo"] = "F"
         
         nationality_patterns = [
             r"NACIONALIDAD\s*[/]?\s*NATIONALITY\s*[:\-]?\s*(.+)",
@@ -87,28 +101,28 @@ class DNINewFrontStrategy(DNIOCRStrategy):
             if match:
                 value = match.group(1).strip()
                 if "ARGENTIN" in value:
-                    result["nacionalidad"] = "ARGENTINA"
+                    fields["nacionalidad"] = "ARGENTINA"
                 break
         
         date_pattern = r"\b(\d{2}[/\-\.]\d{2}[/\-\.]\d{4})\b"
         dates_found = re.findall(date_pattern, text)
         
         if len(dates_found) >= 1:
-            result["fecha_nacimiento"] = dates_found[0]
+            fields["fecha_nacimiento"] = dates_found[0]
         if len(dates_found) >= 2:
-            result["fecha_vencimiento"] = dates_found[1]
+            fields["fecha_vencimiento"] = dates_found[1]
         
-        return result
+        return fields
     
-    def _calculate_confidence(self, result: dict[str, Any]) -> None:
-        fields_found = sum(1 for v in result.values() if v)
+    def _calculate_confidence(self, fields: dict[str, Any]) -> None:
+        fields_found = sum(1 for v in fields.values() if v)
         
-        if result.get("numero_documento") and fields_found >= 3:
+        if fields.get("numero_documento") and fields_found >= 3:
             self._confidence = 0.85
-        elif result.get("numero_documento"):
-            self._confidence = 0.70
+        elif fields.get("numero_documento"):
+            self._confidence = 0.75
         elif fields_found >= 2:
-            self._confidence = 0.55
+            self._confidence = 0.60
         else:
             self._confidence = 0.30
     

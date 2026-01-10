@@ -1,6 +1,5 @@
 import time
 import cv2
-import numpy as np
 from typing import Any
 from PIL import Image
 
@@ -72,7 +71,7 @@ class DNIProcessor:
         
         pil_image = Image.fromarray(cv2.cvtColor(normalized, cv2.COLOR_BGR2RGB))
         
-        result = self._extract_with_strategy(
+        extraction_result = self._extract_with_strategy(
             pil_image,
             heuristic_result.document_variant,
         )
@@ -81,8 +80,9 @@ class DNIProcessor:
         
         return {
             "success": True,
-            "extracted_data": result["data"],
-            "confidence": result["confidence"],
+            "extracted_data": extraction_result["fields"],
+            "confidence": extraction_result["confidence"],
+            "source": extraction_result["source"],
             "dni_type": self._map_variant_to_type(heuristic_result.document_variant),
             "document_variant": heuristic_result.document_variant,
             "heuristic_confidence": heuristic_result.confidence,
@@ -96,35 +96,30 @@ class DNIProcessor:
     ) -> dict[str, Any]:
         if variant == "dni_new_back":
             strategy = self._strategies["dni_new_back"]
-            data = strategy.extract(image)
-            return {"data": data, "confidence": strategy.get_confidence()}
+            return strategy.extract(image)
         
         elif variant == "dni_new_front":
             strategy = self._strategies["dni_new_front"]
-            data = strategy.extract(image)
-            return {"data": data, "confidence": strategy.get_confidence()}
+            return strategy.extract(image)
         
         elif variant == "dni_old":
             strategy = self._strategies["dni_old"]
-            data = strategy.extract(image)
-            return {"data": data, "confidence": strategy.get_confidence()}
+            return strategy.extract(image)
         
         else:
             nuevo_strategy = self._strategies["nuevo"]
-            nuevo_data = nuevo_strategy.extract(image)
-            nuevo_conf = nuevo_strategy.get_confidence()
+            nuevo_result = nuevo_strategy.extract(image)
             
-            if nuevo_conf >= 0.7:
-                return {"data": nuevo_data, "confidence": nuevo_conf}
+            if nuevo_result["confidence"] >= 0.7:
+                return nuevo_result
             
             viejo_strategy = self._strategies["viejo"]
-            viejo_data = viejo_strategy.extract(image)
-            viejo_conf = viejo_strategy.get_confidence()
+            viejo_result = viejo_strategy.extract(image)
             
-            if nuevo_conf >= viejo_conf:
-                return {"data": nuevo_data, "confidence": nuevo_conf}
+            if nuevo_result["confidence"] >= viejo_result["confidence"]:
+                return nuevo_result
             else:
-                return {"data": viejo_data, "confidence": viejo_conf}
+                return viejo_result
     
     def _map_variant_to_type(self, variant: str) -> str:
         mapping = {

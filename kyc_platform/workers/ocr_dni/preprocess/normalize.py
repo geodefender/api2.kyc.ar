@@ -1,6 +1,5 @@
 import cv2
 import numpy as np
-from typing import Optional
 
 from kyc_platform.shared.logging import get_logger
 
@@ -17,11 +16,30 @@ def normalize_image(image: np.ndarray) -> np.ndarray:
     
     normalized = image.copy()
     
-    normalized = _auto_rotate_deskew(normalized)
-    normalized = _trim_margins(normalized)
-    normalized = _resize_to_standard(normalized)
-    normalized = _apply_clahe(normalized)
-    normalized = _detect_and_crop_document(normalized)
+    try:
+        normalized = _auto_rotate_deskew(normalized)
+    except Exception as e:
+        logger.warning(f"Deskew failed, continuing: {e}")
+    
+    try:
+        normalized = _trim_margins(normalized)
+    except Exception as e:
+        logger.warning(f"Trim margins failed, continuing: {e}")
+    
+    try:
+        normalized = _detect_and_crop_document(normalized)
+    except Exception as e:
+        logger.warning(f"Document crop failed, continuing: {e}")
+    
+    try:
+        normalized = _resize_to_standard(normalized)
+    except Exception as e:
+        logger.warning(f"Resize failed, continuing: {e}")
+    
+    try:
+        normalized = _apply_clahe(normalized)
+    except Exception as e:
+        logger.warning(f"CLAHE failed, continuing: {e}")
     
     return normalized
 
@@ -81,36 +99,6 @@ def _trim_margins(image: np.ndarray) -> np.ndarray:
     return image[y:y+h, x:x+w]
 
 
-def _resize_to_standard(image: np.ndarray) -> np.ndarray:
-    h, w = image.shape[:2]
-    
-    if w == TARGET_WIDTH:
-        return image
-    
-    scale = TARGET_WIDTH / w
-    new_h = int(h * scale)
-    
-    resized = cv2.resize(image, (TARGET_WIDTH, new_h), interpolation=cv2.INTER_CUBIC)
-    return resized
-
-
-def _apply_clahe(image: np.ndarray) -> np.ndarray:
-    if len(image.shape) == 2:
-        clahe = cv2.createCLAHE(clipLimit=CLAHE_CLIP_LIMIT, tileGridSize=CLAHE_TILE_SIZE)
-        return clahe.apply(image)
-    
-    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
-    l, a, b = cv2.split(lab)
-    
-    clahe = cv2.createCLAHE(clipLimit=CLAHE_CLIP_LIMIT, tileGridSize=CLAHE_TILE_SIZE)
-    l_clahe = clahe.apply(l)
-    
-    lab_clahe = cv2.merge([l_clahe, a, b])
-    result = cv2.cvtColor(lab_clahe, cv2.COLOR_LAB2BGR)
-    
-    return result
-
-
 def _detect_and_crop_document(image: np.ndarray) -> np.ndarray:
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image.copy()
     
@@ -142,7 +130,7 @@ def _detect_and_crop_document(image: np.ndarray) -> np.ndarray:
     
     x, y, w, h = cv2.boundingRect(largest_contour)
     
-    aspect_ratio = w / h
+    aspect_ratio = w / h if h > 0 else 0
     if aspect_ratio < 1.2 or aspect_ratio > 2.0:
         return image
     
@@ -155,3 +143,33 @@ def _detect_and_crop_document(image: np.ndarray) -> np.ndarray:
     cropped = image[y:y+h, x:x+w]
     
     return cropped
+
+
+def _resize_to_standard(image: np.ndarray) -> np.ndarray:
+    h, w = image.shape[:2]
+    
+    if w == TARGET_WIDTH:
+        return image
+    
+    scale = TARGET_WIDTH / w
+    new_h = int(h * scale)
+    
+    resized = cv2.resize(image, (TARGET_WIDTH, new_h), interpolation=cv2.INTER_CUBIC)
+    return resized
+
+
+def _apply_clahe(image: np.ndarray) -> np.ndarray:
+    if len(image.shape) == 2:
+        clahe = cv2.createCLAHE(clipLimit=CLAHE_CLIP_LIMIT, tileGridSize=CLAHE_TILE_SIZE)
+        return clahe.apply(image)
+    
+    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    
+    clahe = cv2.createCLAHE(clipLimit=CLAHE_CLIP_LIMIT, tileGridSize=CLAHE_TILE_SIZE)
+    l_clahe = clahe.apply(l)
+    
+    lab_clahe = cv2.merge([l_clahe, a, b])
+    result = cv2.cvtColor(lab_clahe, cv2.COLOR_LAB2BGR)
+    
+    return result

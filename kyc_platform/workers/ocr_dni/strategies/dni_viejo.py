@@ -14,32 +14,46 @@ logger = get_logger(__name__)
 
 
 class DNIViejoStrategy(DNIOCRStrategy):
+    
     def __init__(self):
         self._confidence = 0.0
+        self._source = "ocr"
     
     def extract(self, image: Image.Image) -> dict[str, Any]:
         if pytesseract is None:
             logger.error("pytesseract not available")
-            return {}
+            return {
+                "source": "error",
+                "fields": {},
+                "confidence": 0.0,
+            }
         
         try:
             text = pytesseract.image_to_string(image, lang="spa")
-            result = self._parse_ocr_text(text)
+            fields = self._parse_ocr_text(text)
             
-            if result.get("numero_documento"):
+            if fields.get("numero_documento"):
                 self._confidence = 0.75
-            elif any(result.values()):
+            elif any(fields.values()):
                 self._confidence = 0.5
             else:
                 self._confidence = 0.2
             
-            return result
+            return {
+                "source": self._source,
+                "fields": fields,
+                "confidence": self._confidence,
+            }
         except Exception as e:
             logger.error(f"DNI Viejo OCR extraction failed: {e}")
-            return {}
+            return {
+                "source": "error",
+                "fields": {},
+                "confidence": 0.0,
+            }
     
     def _parse_ocr_text(self, text: str) -> dict[str, Any]:
-        result = {}
+        fields = {}
         lines = [line.strip() for line in text.split("\n") if line.strip()]
         text_upper = text.upper()
         
@@ -47,7 +61,7 @@ class DNIViejoStrategy(DNIOCRStrategy):
         for line in lines:
             match = re.search(dni_pattern, line)
             if match:
-                result["numero_documento"] = match.group(1)
+                fields["numero_documento"] = match.group(1)
                 break
         
         apellido_patterns = [
@@ -57,7 +71,10 @@ class DNIViejoStrategy(DNIOCRStrategy):
         for pattern in apellido_patterns:
             match = re.search(pattern, text_upper)
             if match:
-                result["apellido"] = match.group(1).strip().title()
+                value = match.group(1).strip()
+                value = re.sub(r'[^A-ZÁÉÍÓÚÑ\s]', '', value)
+                if value:
+                    fields["apellido"] = value.title()
                 break
         
         nombre_patterns = [
@@ -68,24 +85,27 @@ class DNIViejoStrategy(DNIOCRStrategy):
         for pattern in nombre_patterns:
             match = re.search(pattern, text_upper)
             if match:
-                result["nombre"] = match.group(1).strip().title()
+                value = match.group(1).strip()
+                value = re.sub(r'[^A-ZÁÉÍÓÚÑ\s]', '', value)
+                if value:
+                    fields["nombre"] = value.title()
                 break
         
         if "MASCULINO" in text_upper or " M " in text_upper:
-            result["sexo"] = "M"
+            fields["sexo"] = "M"
         elif "FEMENINO" in text_upper or " F " in text_upper:
-            result["sexo"] = "F"
+            fields["sexo"] = "F"
         
         if "ARGENTIN" in text_upper:
-            result["nacionalidad"] = "ARGENTINA"
+            fields["nacionalidad"] = "ARGENTINA"
         
         date_pattern = r"\b(\d{2}[/\-\.]\d{2}[/\-\.]\d{4})\b"
         dates_found = re.findall(date_pattern, text)
         
         if len(dates_found) >= 1:
-            result["fecha_nacimiento"] = dates_found[0]
+            fields["fecha_nacimiento"] = dates_found[0]
         
-        return result
+        return fields
     
     def get_confidence(self) -> float:
         return self._confidence

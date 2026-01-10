@@ -17,26 +17,39 @@ class DNIOldStrategy(DNIOCRStrategy):
     
     def __init__(self):
         self._confidence = 0.0
+        self._source = "ocr"
     
     def extract(self, image: Image.Image) -> dict[str, Any]:
         if pytesseract is None:
             logger.error("pytesseract not available")
-            return {}
+            return {
+                "source": "error",
+                "fields": {},
+                "confidence": 0.0,
+            }
         
         try:
             text = pytesseract.image_to_string(image, lang="spa")
-            result = self._parse_old_format(text)
+            fields = self._parse_old_format(text)
             
-            self._calculate_confidence(result)
-            return result
+            self._calculate_confidence(fields)
+            
+            return {
+                "source": self._source,
+                "fields": fields,
+                "confidence": self._confidence,
+            }
         except Exception as e:
             logger.error(f"DNI Old OCR extraction failed: {e}")
-            return {}
+            return {
+                "source": "error",
+                "fields": {},
+                "confidence": 0.0,
+            }
     
     def _parse_old_format(self, text: str) -> dict[str, Any]:
-        result = {}
+        fields = {}
         text_upper = text.upper()
-        lines = [line.strip() for line in text.split("\n") if line.strip()]
         
         dni_patterns = [
             r"DOCUMENTO\s*(?:NACIONAL)?\s*(?:DE)?\s*(?:IDENTIDAD)?\s*[:\-\#]?\s*(\d{7,8})",
@@ -46,7 +59,7 @@ class DNIOldStrategy(DNIOCRStrategy):
         for pattern in dni_patterns:
             match = re.search(pattern, text_upper)
             if match:
-                result["numero_documento"] = match.group(1)
+                fields["numero_documento"] = match.group(1)
                 break
         
         apellido_patterns = [
@@ -58,7 +71,7 @@ class DNIOldStrategy(DNIOCRStrategy):
                 value = match.group(1).strip()
                 value = re.sub(r'[^A-ZÁÉÍÓÚÑ\s]', '', value)
                 if value:
-                    result["apellido"] = value.title()
+                    fields["apellido"] = value.title()
                 break
         
         nombre_patterns = [
@@ -70,34 +83,34 @@ class DNIOldStrategy(DNIOCRStrategy):
                 value = match.group(1).strip()
                 value = re.sub(r'[^A-ZÁÉÍÓÚÑ\s]', '', value)
                 if value:
-                    result["nombre"] = value.title()
+                    fields["nombre"] = value.title()
                 break
         
         if "MASCULINO" in text_upper:
-            result["sexo"] = "M"
+            fields["sexo"] = "M"
         elif "FEMENINO" in text_upper:
-            result["sexo"] = "F"
+            fields["sexo"] = "F"
         
         if "ARGENTIN" in text_upper:
-            result["nacionalidad"] = "ARGENTINA"
+            fields["nacionalidad"] = "ARGENTINA"
         
         date_pattern = r"\b(\d{2}[/\-\.]\d{2}[/\-\.]\d{4})\b"
         dates_found = re.findall(date_pattern, text)
         
         if len(dates_found) >= 1:
-            result["fecha_nacimiento"] = dates_found[0]
+            fields["fecha_nacimiento"] = dates_found[0]
         
-        return result
+        return fields
     
-    def _calculate_confidence(self, result: dict[str, Any]) -> None:
-        fields_found = sum(1 for v in result.values() if v)
+    def _calculate_confidence(self, fields: dict[str, Any]) -> None:
+        fields_found = sum(1 for v in fields.values() if v)
         
-        if result.get("numero_documento") and fields_found >= 3:
+        if fields.get("numero_documento") and fields_found >= 3:
             self._confidence = 0.75
-        elif result.get("numero_documento"):
-            self._confidence = 0.60
+        elif fields.get("numero_documento"):
+            self._confidence = 0.65
         elif fields_found >= 2:
-            self._confidence = 0.45
+            self._confidence = 0.50
         else:
             self._confidence = 0.20
     
