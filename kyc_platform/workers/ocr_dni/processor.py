@@ -1,16 +1,32 @@
 import time
+import cv2
+import numpy as np
 from typing import Any
 from PIL import Image
 
-from kyc_platform.workers.ocr_dni.strategies import DNINuevoStrategy, DNIViejoStrategy
+from kyc_platform.workers.ocr_dni.preprocess import normalize_image
+from kyc_platform.workers.ocr_dni.heuristics import DniHeuristicAnalyzer
+from kyc_platform.workers.ocr_dni.strategies import (
+    DNINewFrontStrategy,
+    DNINewBackStrategy,
+    DNIOldStrategy,
+    DNINuevoStrategy,
+    DNIViejoStrategy,
+)
 from kyc_platform.shared.logging import get_logger
 
 logger = get_logger(__name__)
 
 
 class DNIProcessor:
+    
     def __init__(self):
-        self.strategies = {
+        self._heuristic_analyzer = DniHeuristicAnalyzer()
+        
+        self._strategies = {
+            "dni_new_front": DNINewFrontStrategy(),
+            "dni_new_back": DNINewBackStrategy(),
+            "dni_old": DNIOldStrategy(),
             "nuevo": DNINuevoStrategy(),
             "viejo": DNIViejoStrategy(),
         }
@@ -19,7 +35,9 @@ class DNIProcessor:
         start_time = time.time()
         
         try:
-            image = Image.open(image_path)
+            cv_image = cv2.imread(image_path)
+            if cv_image is None:
+                raise ValueError(f"Could not read image from {image_path}")
         except Exception as e:
             logger.error(f"Failed to open image: {e}")
             return {
@@ -28,39 +46,91 @@ class DNIProcessor:
                 "processing_time_ms": int((time.time() - start_time) * 1000),
             }
         
-        nuevo_strategy = self.strategies["nuevo"]
-        nuevo_result = nuevo_strategy.extract(image)
-        nuevo_confidence = nuevo_strategy.get_confidence()
+        try:
+            normalized = normalize_image(cv_image)
+            logger.info("Image normalized successfully")
+        except Exception as e:
+            logger.warning(f"Image normalization failed, using original: {e}")
+            normalized = cv_image
         
-        if nuevo_confidence >= 0.9:
-            processing_time_ms = int((time.time() - start_time) * 1000)
-            return {
-                "success": True,
-                "extracted_data": nuevo_result,
-                "confidence": nuevo_confidence,
-                "dni_type": "nuevo",
-                "processing_time_ms": processing_time_ms,
-            }
+        heuristic_result = self._heuristic_analyzer.analyze(normalized)
         
-        viejo_strategy = self.strategies["viejo"]
-        viejo_result = viejo_strategy.extract(image)
-        viejo_confidence = viejo_strategy.get_confidence()
+        logger.info(
+            "Heuristic analysis completed",
+            extra={
+                "document_variant": heuristic_result.document_variant,
+                "confidence": heuristic_result.confidence,
+                "signals": {
+                    "pdf417_score": heuristic_result.signals.pdf417_score,
+                    "mrz_score": heuristic_result.signals.mrz_score,
+                    "dni_front_score": heuristic_result.signals.dni_front_score,
+                    "dni_old_score": heuristic_result.signals.dni_old_score,
+                    "notes": heuristic_result.signals.notes,
+                },
+            },
+        )
         
-        if nuevo_confidence >= viejo_confidence:
-            best_result = nuevo_result
-            best_confidence = nuevo_confidence
-            dni_type = "nuevo"
-        else:
-            best_result = viejo_result
-            best_confidence = viejo_confidence
-            dni_type = "viejo"
+        pil_image = Image.fromarray(cv2.cvtColor(normalized, cv2.COLOR_BGR2RGB))
+        
+        result = self._extract_with_strategy(
+            pil_image,
+            heuristic_result.document_variant,
+        )
         
         processing_time_ms = int((time.time() - start_time) * 1000)
         
         return {
             "success": True,
-            "extracted_data": best_result,
-            "confidence": best_confidence,
-            "dni_type": dni_type,
+            "extracted_data": result["data"],
+            "confidence": result["confidence"],
+            "dni_type": self._map_variant_to_type(heuristic_result.document_variant),
+            "document_variant": heuristic_result.document_variant,
+            "heuristic_confidence": heuristic_result.confidence,
             "processing_time_ms": processing_time_ms,
         }
+    
+    def _extract_with_strategy(
+        self,
+        image: Image.Image,
+        variant: str,
+    ) -> dict[str, Any]:
+        if variant == "dni_new_back":
+            strategy = self._strategies["dni_new_back"]
+            data = strategy.extract(image)
+            return {"data": data, "confidence": strategy.get_confidence()}
+        
+        elif variant == "dni_new_front":
+            strategy = self._strategies["dni_new_front"]
+            data = strategy.extract(image)
+            return {"data": data, "confidence": strategy.get_confidence()}
+        
+        elif variant == "dni_old":
+            strategy = self._strategies["dni_old"]
+            data = strategy.extract(image)
+            return {"data": data, "confidence": strategy.get_confidence()}
+        
+        else:
+            nuevo_strategy = self._strategies["nuevo"]
+            nuevo_data = nuevo_strategy.extract(image)
+            nuevo_conf = nuevo_strategy.get_confidence()
+            
+            if nuevo_conf >= 0.7:
+                return {"data": nuevo_data, "confidence": nuevo_conf}
+            
+            viejo_strategy = self._strategies["viejo"]
+            viejo_data = viejo_strategy.extract(image)
+            viejo_conf = viejo_strategy.get_confidence()
+            
+            if nuevo_conf >= viejo_conf:
+                return {"data": nuevo_data, "confidence": nuevo_conf}
+            else:
+                return {"data": viejo_data, "confidence": viejo_conf}
+    
+    def _map_variant_to_type(self, variant: str) -> str:
+        mapping = {
+            "dni_new_front": "nuevo",
+            "dni_new_back": "nuevo",
+            "dni_old": "viejo",
+            "unknown": "nuevo",
+        }
+        return mapping.get(variant, "nuevo")

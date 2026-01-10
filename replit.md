@@ -15,6 +15,11 @@ Microservicio event-driven en Python para procesamiento OCR de documentos de ide
   - Enhanced DLQ: Added worker_name, verification_id, max_receive_count, is_final_attempt
   - Explicit state machine: queued → processing → extracted/failed lifecycle
   - PII sanitization: Masking for document numbers, CUIL, MRZ, PDF417, base64 images
+- **Heuristic DNI detection (Jan 10, 2026)**:
+  - Added preprocess/normalize.py: auto-rotate, deskew, trim, resize, CLAHE
+  - Added heuristics/dni_heuristic_analyzer.py: PDF417, MRZ, front, old scoring
+  - New strategies: dni_new_front.py, dni_new_back.py, dni_old.py
+  - Modified processor.py: heuristic detection BEFORE OCR, strategy selection by variant
 
 ## User Preferences
 - Language: Spanish for communication, English for code
@@ -30,13 +35,16 @@ kyc_platform/
 ├── api_handler/          # FastAPI Handler (port 5000)
 ├── workers/
 │   ├── ocr_dni/          # DNI Worker (PDF417 + OCR)
+│   │   ├── preprocess/   # Image normalization (deskew, CLAHE, trim)
+│   │   ├── heuristics/   # Document variant detection (PDF417, MRZ, front, old)
+│   │   └── strategies/   # OCR strategies per variant
 │   ├── ocr_passport/     # Passport Worker (MRZ)
 │   └── webhook_dispatcher/ # Webhook notifications
 ├── queue/                # EventQueue abstraction + DLQ
 ├── contracts/            # Events + Models
 ├── persistence/          # SQLite repository
 ├── runner/               # Local pipeline simulation
-└── shared/               # Config + Logging + AWS Config
+└── shared/               # Config + Logging + AWS Config + PII Sanitizer
 ```
 
 ### Key Files
@@ -61,6 +69,8 @@ kyc_platform/
 - Webhook: HMAC-signed notifications with retry/backoff
 - State Machine: Explicit queued → processing → extracted/failed transitions
 - PII Sanitization: Safe logging with masked sensitive data
+- Heuristic Detection: Document variant detection (dni_new_front, dni_new_back, dni_old) before OCR
+- Image Preprocessing: Auto-rotate, deskew, CLAHE, margin trim, contour detection
 - Configurable timeouts and memory per Lambda
 
 ### Dependencies
@@ -68,4 +78,5 @@ kyc_platform/
 - pytesseract (OCR)
 - pyzbar (PDF417 barcode)
 - Pillow (Image processing)
+- OpenCV (Image preprocessing, heuristics)
 - Mangum (Lambda adapter)

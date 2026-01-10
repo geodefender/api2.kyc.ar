@@ -2,7 +2,6 @@ import re
 import cv2
 import numpy as np
 from dataclasses import dataclass, field
-from typing import Optional
 
 from kyc_platform.shared.logging import get_logger
 
@@ -49,9 +48,10 @@ class HeuristicResult:
 class DniHeuristicAnalyzer:
     
     def __init__(self):
-        self._mrz_pattern = re.compile(r'^[A-Z0-9<]{20,44}$')
-        self._skin_lower = np.array([0, 20, 70], dtype=np.uint8)
-        self._skin_upper = np.array([20, 255, 255], dtype=np.uint8)
+        self._skin_lower_hsv = np.array([0, 20, 70], dtype=np.uint8)
+        self._skin_upper_hsv = np.array([20, 255, 255], dtype=np.uint8)
+        self._skin_lower_ycrcb = np.array([0, 135, 85], dtype=np.uint8)
+        self._skin_upper_ycrcb = np.array([255, 180, 135], dtype=np.uint8)
     
     def analyze(self, image: np.ndarray) -> HeuristicResult:
         if image is None or image.size == 0:
@@ -67,9 +67,9 @@ class DniHeuristicAnalyzer:
         if signals.pdf417_score >= PDF417_THRESHOLD:
             signals.notes.append("PDF417 barcode detected")
         
-        signals.mrz_score = self._detect_mrz(image)
+        signals.mrz_score = self._detect_mrz_geometry(image)
         if signals.mrz_score >= MRZ_THRESHOLD:
-            signals.notes.append("MRZ pattern detected")
+            signals.notes.append("MRZ geometry detected")
         
         signals.dni_front_score = self._detect_dni_front(image)
         if signals.dni_front_score >= DNI_FRONT_THRESHOLD:
@@ -105,7 +105,14 @@ class DniHeuristicAnalyzer:
         repetition_score = self._calculate_vertical_repetition(binary)
         position_score = self._calculate_position_score(roi_x, roi_y, w, h)
         
-        pdf417_score = 0.5 * density_score + 0.3 * repetition_score + 0.2 * position_score
+        aspect_score = self._calculate_barcode_aspect(roi)
+        
+        pdf417_score = (
+            0.4 * density_score +
+            0.3 * repetition_score +
+            0.15 * position_score +
+            0.15 * aspect_score
+        )
         
         return min(1.0, pdf417_score)
     
@@ -117,16 +124,23 @@ class DniHeuristicAnalyzer:
         black_pixels = np.sum(binary == 0)
         white_pixels = np.sum(binary == 255)
         
-        ratio = min(black_pixels, white_pixels) / max(black_pixels, white_pixels) if max(black_pixels, white_pixels) > 0 else 0
+        if max(black_pixels, white_pixels) == 0:
+            return 0.0
         
-        return ratio
+        ratio = min(black_pixels, white_pixels) / max(black_pixels, white_pixels)
+        
+        if 0.35 < ratio < 0.65:
+            return ratio * 1.5
+        return ratio * 0.8
     
     def _calculate_vertical_repetition(self, binary: np.ndarray) -> float:
-        if binary.shape[0] < 10:
+        if binary.shape[0] < 10 or binary.shape[1] < 20:
             return 0.0
         
         transitions = []
-        for row in range(min(50, binary.shape[0])):
+        sample_rows = min(50, binary.shape[0])
+        
+        for row in range(sample_rows):
             row_data = binary[row, :]
             diff = np.abs(np.diff(row_data.astype(np.int16)))
             transition_count = np.sum(diff > 127)
@@ -138,17 +152,17 @@ class DniHeuristicAnalyzer:
         avg_transitions = np.mean(transitions)
         std_transitions = np.std(transitions)
         
-        if avg_transitions < 20:
+        if avg_transitions < 15:
             return 0.0
         
         consistency = 1 - (std_transitions / avg_transitions) if avg_transitions > 0 else 0
-        density = min(1.0, avg_transitions / 100)
+        density = min(1.0, avg_transitions / 80)
         
-        return (consistency + density) / 2
+        return min(1.0, (consistency * 0.6 + density * 0.4))
     
     def _calculate_position_score(self, roi_x: int, roi_y: int, w: int, h: int) -> float:
-        x_ratio = roi_x / w
-        y_ratio = roi_y / h
+        x_ratio = roi_x / w if w > 0 else 0
+        y_ratio = roi_y / h if h > 0 else 0
         
         if x_ratio >= 0.55 and y_ratio >= 0.50:
             return 1.0
@@ -157,7 +171,21 @@ class DniHeuristicAnalyzer:
         else:
             return 0.3
     
-    def _detect_mrz(self, image: np.ndarray) -> float:
+    def _calculate_barcode_aspect(self, roi: np.ndarray) -> float:
+        h, w = roi.shape[:2]
+        if h == 0:
+            return 0.0
+        
+        aspect = w / h
+        
+        if 2.5 <= aspect <= 3.5:
+            return 1.0
+        elif 2.0 <= aspect <= 4.0:
+            return 0.6
+        else:
+            return 0.2
+    
+    def _detect_mrz_geometry(self, image: np.ndarray) -> float:
         h, w = image.shape[:2]
         
         roi_y = int(h * 0.70)
@@ -168,80 +196,75 @@ class DniHeuristicAnalyzer:
         
         gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY) if len(roi.shape) == 3 else roi
         
-        small = cv2.resize(gray, (0, 0), fx=0.5, fy=0.5)
+        _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
         
-        try:
-            import pytesseract
-            text = pytesseract.image_to_string(small, config='--psm 6')
-        except Exception:
-            return 0.0
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 3))
+        dilated = cv2.dilate(binary, kernel, iterations=2)
         
-        lines = text.strip().split('\n')
-        mrz_lines = []
+        contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
-        for line in lines:
-            clean_line = ''.join(c.upper() if c.isalnum() or c == '<' else '' for c in line)
-            if len(clean_line) >= 20 and self._mrz_pattern.match(clean_line):
-                mrz_lines.append(clean_line)
+        horizontal_strips = []
+        roi_h, roi_w = roi.shape[:2]
         
-        if len(mrz_lines) < 2:
-            return len(mrz_lines) * 0.3
+        for contour in contours:
+            x, y, cw, ch = cv2.boundingRect(contour)
+            
+            aspect = cw / ch if ch > 0 else 0
+            width_ratio = cw / roi_w if roi_w > 0 else 0
+            
+            if aspect > 8 and width_ratio > 0.6:
+                horizontal_strips.append((x, y, cw, ch))
         
-        score = 0.6
+        if len(horizontal_strips) >= 2:
+            horizontal_strips.sort(key=lambda s: s[1])
+            
+            y_positions = [s[1] for s in horizontal_strips[:3]]
+            if len(y_positions) >= 2:
+                gaps = np.diff(y_positions)
+                if len(gaps) > 0 and np.std(gaps) < 15:
+                    return 0.85
+            
+            return 0.70
+        elif len(horizontal_strips) == 1:
+            return 0.40
         
-        for line in mrz_lines:
-            if 'ARG' in line:
-                score += 0.15
-                break
-        
-        for line in mrz_lines:
-            if line.startswith('ID') or line.startswith('P<'):
-                score += 0.1
-                break
-        
-        return min(1.0, score)
+        return 0.0
     
     def _detect_dni_front(self, image: np.ndarray) -> float:
         h, w = image.shape[:2]
         score = 0.0
         
-        photo_roi_x = int(w * 0.05)
-        photo_roi_y = int(h * 0.15)
-        photo_roi_w = int(w * 0.35)
-        photo_roi_h = int(h * 0.70)
+        photo_x = int(w * 0.05)
+        photo_y = int(h * 0.15)
+        photo_w = int(w * 0.35)
+        photo_h = int(h * 0.65)
         
-        photo_roi = image[photo_roi_y:photo_roi_y+photo_roi_h, photo_roi_x:photo_roi_x+photo_roi_w]
+        photo_roi = image[photo_y:photo_y+photo_h, photo_x:photo_x+photo_w]
         
         if photo_roi.size > 0:
             skin_score = self._detect_skin_tone(photo_roi)
-            if skin_score > 0.1:
-                score += 0.25
+            if skin_score > 0.15:
+                score += 0.35
+            elif skin_score > 0.08:
+                score += 0.20
             
-            aspect = photo_roi_w / photo_roi_h if photo_roi_h > 0 else 0
-            if 0.6 < aspect < 0.9:
-                score += 0.1
+            photo_aspect = photo_w / photo_h if photo_h > 0 else 0
+            if 0.65 < photo_aspect < 0.85:
+                score += 0.10
         
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
+        sig_x = int(w * 0.50)
+        sig_y = int(h * 0.55)
+        sig_roi = image[sig_y:, sig_x:]
         
-        try:
-            import pytesseract
-            text = pytesseract.image_to_string(gray, config='--psm 6').upper()
-            
-            bilingual_terms = ['SURNAME', 'NAME', 'NATIONALITY', 'APELLIDO', 'NOMBRE', 'NACIONALIDAD']
-            found_terms = sum(1 for term in bilingual_terms if term in text)
-            
-            if found_terms >= 2:
-                score += 0.3
-            elif found_terms >= 1:
-                score += 0.15
-        except Exception:
-            pass
-        
-        signature_score = self._detect_signature_area(image)
-        score += signature_score * 0.15
+        if sig_roi.size > 0:
+            signature_score = self._detect_signature_texture(sig_roi)
+            score += signature_score * 0.20
         
         hologram_score = self._detect_hologram(image)
-        score += hologram_score * 0.2
+        score += hologram_score * 0.20
+        
+        structure_score = self._detect_card_structure(image)
+        score += structure_score * 0.15
         
         return min(1.0, score)
     
@@ -250,32 +273,33 @@ class DniHeuristicAnalyzer:
             return 0.0
         
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-        skin_mask = cv2.inRange(hsv, self._skin_lower, self._skin_upper)
+        skin_mask_hsv = cv2.inRange(hsv, self._skin_lower_hsv, self._skin_upper_hsv)
+        
+        ycrcb = cv2.cvtColor(image, cv2.COLOR_BGR2YCrCb)
+        skin_mask_ycrcb = cv2.inRange(ycrcb, self._skin_lower_ycrcb, self._skin_upper_ycrcb)
+        
+        skin_mask = cv2.bitwise_and(skin_mask_hsv, skin_mask_ycrcb)
         
         skin_pixels = np.sum(skin_mask > 0)
         total_pixels = image.shape[0] * image.shape[1]
         
         return skin_pixels / total_pixels if total_pixels > 0 else 0.0
     
-    def _detect_signature_area(self, image: np.ndarray) -> float:
-        h, w = image.shape[:2]
+    def _detect_signature_texture(self, image: np.ndarray) -> float:
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
         
-        sig_x = int(w * 0.55)
-        sig_y = int(h * 0.50)
-        sig_roi = image[sig_y:, sig_x:]
-        
-        if sig_roi.size == 0:
-            return 0.0
-        
-        gray = cv2.cvtColor(sig_roi, cv2.COLOR_BGR2GRAY) if len(sig_roi.shape) == 3 else sig_roi
         edges = cv2.Canny(gray, 50, 150)
         
-        edge_density = np.sum(edges > 0) / edges.size
+        edge_density = np.sum(edges > 0) / edges.size if edges.size > 0 else 0
         
-        if 0.05 < edge_density < 0.25:
-            return 0.8
-        elif edge_density > 0.02:
-            return 0.4
+        if 0.03 < edge_density < 0.20:
+            contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            if 5 < len(contours) < 100:
+                return 0.8
+            elif len(contours) > 2:
+                return 0.5
+        
         return 0.0
     
     def _detect_hologram(self, image: np.ndarray) -> float:
@@ -286,41 +310,59 @@ class DniHeuristicAnalyzer:
         s_channel = hsv[:, :, 1]
         v_channel = hsv[:, :, 2]
         
-        high_sat_bright = (s_channel > 100) & (v_channel > 200)
-        ratio = np.sum(high_sat_bright) / image.size
+        high_sat_bright = (s_channel > 100) & (v_channel > 180)
+        ratio = np.sum(high_sat_bright) / (image.shape[0] * image.shape[1])
         
-        if ratio > 0.01:
-            return 0.6
+        if ratio > 0.015:
+            return 0.7
+        elif ratio > 0.008:
+            return 0.4
         return 0.0
+    
+    def _detect_card_structure(self, image: np.ndarray) -> float:
+        h, w = image.shape[:2]
+        
+        aspect = w / h if h > 0 else 0
+        
+        if 1.4 < aspect < 1.7:
+            return 0.8
+        elif 1.3 < aspect < 1.8:
+            return 0.5
+        return 0.2
     
     def _detect_dni_old(self, image: np.ndarray) -> float:
         h, w = image.shape[:2]
         score = 0.0
         
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
+        
         std_dev = np.std(gray)
+        if std_dev < 45:
+            score += 0.25
+        elif std_dev < 55:
+            score += 0.15
         
-        if std_dev < 50:
-            score += 0.2
+        photo_x = int(w * 0.60)
+        photo_roi = image[:, photo_x:]
         
-        photo_roi_x = int(w * 0.60)
-        photo_roi = image[:, photo_roi_x:]
-        
-        if photo_roi.size > 0:
+        if photo_roi.size > 0 and len(photo_roi.shape) == 3:
             skin_score = self._detect_skin_tone(photo_roi)
-            if skin_score > 0.1:
-                score += 0.2
+            if skin_score > 0.12:
+                score += 0.30
+            elif skin_score > 0.06:
+                score += 0.15
         
-        try:
-            import pytesseract
-            text = pytesseract.image_to_string(gray, config='--psm 6').upper()
+        text_region = gray[:int(h * 0.6), :int(w * 0.55)]
+        if text_region.size > 0:
+            edges = cv2.Canny(text_region, 50, 150)
+            edge_density = np.sum(edges > 0) / edges.size
             
-            if 'NUMERO DE DOCUMENTO' in text or 'DOCUMENTO NACIONAL' in text:
-                score += 0.4
-            elif 'DOCUMENTO' in text:
-                score += 0.2
-        except Exception:
-            pass
+            if 0.02 < edge_density < 0.15:
+                score += 0.25
+        
+        aspect = w / h if h > 0 else 0
+        if 1.4 < aspect < 1.7:
+            score += 0.10
         
         return min(1.0, score)
     
