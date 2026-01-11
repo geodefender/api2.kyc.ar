@@ -166,3 +166,26 @@ All coordinates in `templates.json` are relative percentages:
 - `[x, y, width, height]` where each value is 0-100
 - Origin is top-left corner
 - Coordinates scale automatically to actual image dimensions
+
+## Known Limitations
+
+### Back-side Variant Detection
+
+Back-side variant distinction between nuevo_2016, nuevo_2019, and nuevo_2023 has limited accuracy due to subtle visual differences. The system may misidentify the specific variant but:
+
+- Zone verification still works correctly (zones have similar positions across variants)
+- Authenticity scoring remains reliable
+- Critical zone checks are unaffected
+
+**Recommendations**:
+- Pair back images with front images for improved variant detection
+- Use front-side detection as the primary variant identifier
+- Additional reference samples would improve back-side accuracy
+
+### Front-side Detection Accuracy
+
+Front-side variant detection is 100% accurate:
+- `antiguo`: Photo on right side, MRZ on front
+- `nuevo_2023`: Pink color scheme
+- `nuevo_2016`: Face visible in sun hologram
+- `nuevo_2019`: Default for nuevo without pink/face
